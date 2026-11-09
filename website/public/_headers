@@ -8,7 +8,12 @@
 
 # The policy's Markdown, for AI assistants; search engines should show the page instead.
 /privacy.md
+  Content-Type: text/markdown; charset=utf-8
   Link: <https://unreeled.app/privacy>; rel="canonical"
+
+# Cloudflare sends text without a charset, and these have characters outside ASCII.
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
 
 # Pages add a hash of each image to its address (build.mjs), so images can be kept for a year.
 /images/*
