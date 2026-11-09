@@ -17,6 +17,7 @@ import { marked } from "marked";
 
 const site = "https://unreeled.app";
 const repository = "https://github.com/Mdavoigneau/Unreeled";
+const email = "hello@unreeled.app";
 const website = new URL("./", import.meta.url);
 const root = new URL("../", website);
 const dist = new URL("dist/", website);
@@ -55,61 +56,149 @@ async function privacy() {
 const escape = (text) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-/** What search engines and assistants read about the app, as schema.org JSON-LD. */
-function structuredData() {
-  const app = `${site}/#app`;
+/** Plain text from a piece of the site's own HTML, for structured data. */
+const plainText = (html) =>
+  html
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&nbsp;", " ")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&amp;", "&")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** A date the way the site writes it, such as "9 November 2026", for an ISO date. */
+const longDate = (date) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+// MARK: Structured data
+//
+// What search engines and assistants read about each page, as schema.org JSON-LD.
+
+const ids = {
+  website: `${site}/#website`,
+  organization: `${site}/#organization`,
+  app: `${site}/#app`,
+};
+
+const websiteData = {
+  "@type": "WebSite",
+  "@id": ids.website,
+  url: `${site}/`,
+  name: "Unreeled",
+  description: "Your friends on Instagram, without the rabbit hole.",
+  inLanguage: "en",
+  publisher: { "@id": ids.organization },
+};
+
+/** The project, which publishes the site and writes its articles. */
+const organizationData = {
+  "@type": "Organization",
+  "@id": ids.organization,
+  name: "Unreeled",
+  url: `${site}/`,
+  logo: `${site}/icon.png`,
+  email,
+  sameAs: [repository],
+};
+
+/** The questions in a page's <section class="faq">: each <h3>, and what follows it as the answer. */
+function questionsData(main) {
+  const section = main.match(/<section\b[^>]*\bclass="[^"]*\bfaq\b[^"]*"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+  if (!section) return [];
+  const mainEntity = section
+    .split(/<h3\b[^>]*>/)
+    .slice(1)
+    .map((part) => {
+      const [question, answer] = part.split("</h3>");
+      return {
+        "@type": "Question",
+        name: plainText(question),
+        acceptedAnswer: { "@type": "Answer", text: plainText(answer) },
+      };
+    });
+  return [{ "@type": "FAQPage", mainEntity }];
+}
+
+/** An article: the research and the guide. */
+function articleData(page) {
+  const url = `${site}${page.path}`;
   return {
-    "@context": "https://schema.org",
-    "@graph": [
-      {
-        "@type": "WebSite",
-        "@id": `${site}/#website`,
-        url: `${site}/`,
-        name: "Unreeled",
-        description: "Your friends on Instagram, without the rabbit hole.",
-        inLanguage: "en",
-      },
-      {
-        "@type": "SoftwareApplication",
-        "@id": app,
-        name: "Unreeled",
-        description:
-          "A free, open-source iPhone app for Instagram that shows the people you follow and nothing else: their posts newest first, their stories, your messages and your activity. No Reels feed, no Explore, no suggested posts, no ads. Unofficial: not made or endorsed by Instagram or Meta.",
-        url: `${site}/`,
-        image: `${site}/icon.png`,
-        screenshot: `${site}/images/welcome.png`,
-        applicationCategory: "SocialNetworkingApplication",
-        operatingSystem: "iOS 18.0 or later",
-        availableOnDevice: "iPhone",
-        isAccessibleForFree: true,
-        offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-        license: "https://www.gnu.org/licenses/gpl-3.0.html",
-        featureList: [
-          "Home: stories on top, then posts from the accounts you follow, newest first",
-          "Stories: watch, like and reply; post a photo or video to yours",
-          "Messages: inbox with search; text, photos, videos and voice messages; hearts",
-          "Activity: likes, new followers and follow requests",
-          "Profiles and posts, with comments, and account search",
-          "No Reels feed, no Explore, no suggested posts, no ads",
-          "Collects nothing: no analytics, no tracking, no third-party code",
-        ],
-        sameAs: [repository],
-      },
-      {
-        "@type": "SoftwareSourceCode",
-        "@id": `${repository}#source`,
-        name: "Unreeled",
-        codeRepository: repository,
-        programmingLanguage: "Swift",
-        license: "https://www.gnu.org/licenses/gpl-3.0.html",
-        targetProduct: { "@id": app },
-      },
-    ],
+    "@type": "Article",
+    "@id": `${url}#article`,
+    headline: page.headline,
+    description: page.description,
+    url,
+    mainEntityOfPage: url,
+    image: [`${site}/images/og.png`, `${site}/icon.png`],
+    datePublished: page.published,
+    dateModified: page.modified,
+    inLanguage: "en",
+    author: { "@id": ids.organization },
+    publisher: { "@id": ids.organization },
+    isPartOf: { "@id": ids.website },
+    about: page.about.map(([name, sameAs]) => ({ "@type": "Thing", name, sameAs })),
   };
 }
 
-function head(page) {
+/** The app, and its source code. */
+const appData = [
+  {
+    "@type": "SoftwareApplication",
+    "@id": ids.app,
+    name: "Unreeled",
+    description:
+      "A free, open-source iPhone app for Instagram that shows the people you follow and nothing else: their posts newest first, their stories, your messages and your activity. No Reels feed, no Explore, no suggested posts, no ads. Unofficial: not made or endorsed by Instagram or Meta.",
+    url: `${site}/`,
+    image: `${site}/icon.png`,
+    screenshot: `${site}/images/welcome.png`,
+    applicationCategory: "SocialNetworkingApplication",
+    operatingSystem: "iOS 18.0 or later",
+    availableOnDevice: "iPhone",
+    isAccessibleForFree: true,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    license: "https://www.gnu.org/licenses/gpl-3.0.html",
+    featureList: [
+      "Home: stories on top, then posts from the accounts you follow, newest first",
+      "Stories: watch, like and reply; post a photo or video to yours",
+      "Messages: inbox with search; text, photos, videos and voice messages; hearts",
+      "Activity: likes, new followers and follow requests",
+      "Profiles and posts, with comments, and account search",
+      "No Reels feed, no Explore, no suggested posts, no ads",
+      "Collects nothing: no analytics, no tracking, no third-party code",
+    ],
+    publisher: { "@id": ids.organization },
+    sameAs: [repository],
+  },
+  {
+    "@type": "SoftwareSourceCode",
+    "@id": `${repository}#source`,
+    name: "Unreeled",
+    codeRepository: repository,
+    programmingLanguage: "Swift",
+    license: "https://www.gnu.org/licenses/gpl-3.0.html",
+    targetProduct: { "@id": ids.app },
+  },
+];
+
+/** The home page describes the app; articles describe themselves. Other pages have none. */
+function structuredData(page, main) {
+  let graph;
+  if (page.path === "/") graph = [websiteData, organizationData, ...appData, ...questionsData(main)];
+  else if (page.published) graph = [websiteData, organizationData, articleData(page), ...questionsData(main)];
+  else return null;
+  return { "@context": "https://schema.org", "@graph": graph };
+}
+
+function head(page, main) {
   const url = page.path && `${site}${page.path}`;
+  const article = Boolean(page.published);
   const tags = [
     `<title>${escape(page.title)}</title>`,
     `<meta name="description" content="${escape(page.description)}">`,
@@ -122,9 +211,11 @@ function head(page) {
   ];
   if (url) {
     tags.push(
-      `<meta property="og:type" content="website">`,
+      // Lets search results and Discover show the share card large.
+      `<meta name="robots" content="max-image-preview:large">`,
+      `<meta property="og:type" content="${article ? "article" : "website"}">`,
       `<meta property="og:site_name" content="Unreeled">`,
-      `<meta property="og:title" content="${escape(page.title)}">`,
+      `<meta property="og:title" content="${escape(page.socialTitle ?? page.headline ?? page.title)}">`,
       `<meta property="og:description" content="${escape(page.description)}">`,
       `<meta property="og:url" content="${url}">`,
       `<meta property="og:image" content="${site}/images/og.png">`,
@@ -133,13 +224,39 @@ function head(page) {
       `<meta property="og:image:alt" content="The Unreeled icon, a white U on steel blue, beside the words: Unreeled. Your friends on Instagram, without the rabbit hole.">`,
       `<meta name="twitter:card" content="summary_large_image">`,
     );
+    if (article) {
+      tags.push(
+        `<meta property="article:published_time" content="${page.published}">`,
+        `<meta property="article:modified_time" content="${page.modified}">`,
+      );
+    }
   }
-  if (page.structuredData) {
-    const json = JSON.stringify(structuredData(), null, 2).replaceAll("<", "\\u003c");
-    tags.push(`<script type="application/ld+json">\n${json}\n</script>`);
+  const data = url && structuredData(page, main);
+  if (data) {
+    const json = JSON.stringify(data, null, 2).replaceAll("<", "\\u003c");
+    tags.push(`<!--email_off--><script type="application/ld+json">\n${json}\n</script><!--/email_off-->`);
   }
   return tags.join("\n");
 }
+
+/** Cloudflare's Email Address Obfuscation, on by default, replaces email addresses in pages with a
+ * link that needs its JavaScript, which this site doesn't run (see the Content-Security-Policy in
+ * public/_headers). It leaves alone anything between <!--email_off--> and <!--/email_off-->, so
+ * every mailto: link goes inside those, and so does the structured data (in head above). */
+const keepEmailAddresses = (html) =>
+  html.replace(/<a href="mailto:[^"]*">[\s\S]*?<\/a>/g, (link) => `<!--email_off-->${link}<!--/email_off-->`);
+
+/** On phones, a table shows each row as a short list (src/style.css), with every cell labelled by
+ * its column's heading, so each <td> gets that heading as data-label. */
+const labelTableCells = (html) =>
+  html.replace(/<table>([\s\S]*?)<\/table>/g, (table, inner) => {
+    const headings = [...inner.matchAll(/<th>([\s\S]*?)<\/th>/g)].map((match) => escape(plainText(match[1])));
+    const rows = inner.replace(/<tr>([\s\S]*?)<\/tr>/g, (row, cells) => {
+      let column = 0;
+      return `<tr>${cells.replace(/<td>/g, () => `<td data-label="${headings[column++] ?? ""}">`)}</tr>`;
+    });
+    return `<table>${rows}</table>`;
+  });
 
 /** Adds a short hash of each image to its address, so browsers can keep images for a year (see
  * public/_headers) and still get a new one the moment it changes. */
@@ -156,23 +273,29 @@ async function versionImages(html) {
 }
 
 async function render(page, layout, style) {
-  const main = page.main ?? (await readFile(new URL(`src/${page.file}`, website), "utf8"));
+  let main = page.main ?? (await readFile(new URL(`src/${page.file}`, website), "utf8"));
+  // Articles show their dates from the page list below, so the page and its metadata agree.
+  if (page.published) {
+    const time = (date) => `<time datetime="${date}">${longDate(date)}</time>`;
+    main = main.replaceAll("{{published}}", time(page.published)).replaceAll("{{modified}}", time(page.modified));
+  }
   let html = layout
-    .replace("{{head}}", () => head(page))
+    .replace("{{head}}", () => head(page, main))
     .replace("{{style}}", () => style.trim())
     .replace("{{main}}", () => main.trim());
   // Marks where you are in the header.
   if (page.path) {
     html = html.replace(`<a href="${page.path}">`, `<a href="${page.path}" aria-current="page">`);
   }
-  await writeFile(new URL(page.file, dist), await versionImages(html));
+  await writeFile(new URL(page.file, dist), await versionImages(keepEmailAddresses(labelTableCells(html))));
 }
 
 function sitemap(pages) {
   const urls = pages
     .filter((page) => page.path)
     .map((page) => {
-      const lastModified = page.lastModified ? `<lastmod>${page.lastModified}</lastmod>` : "";
+      const date = page.lastModified ?? page.modified;
+      const lastModified = date ? `<lastmod>${date}</lastmod>` : "";
       return `  <url><loc>${site}${page.path}</loc>${lastModified}</url>`;
     });
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -192,13 +315,45 @@ const policy = await privacy();
 const layout = await readFile(new URL("src/layout.html", website), "utf8");
 const style = await readFile(new URL("src/style.css", website), "utf8");
 
+// Articles have a headline (their <h1>), the dates they were first published and last changed,
+// and what they're about, as Wikipedia articles, for search engines and assistants.
 const pages = [
   {
     file: "index.html",
     path: "/",
-    title: "Unreeled: your friends on Instagram, without the rabbit hole",
+    // What people search for; links shared elsewhere show the tagline.
+    title: "Unreeled: Instagram without Reels, just your friends",
+    socialTitle: "Unreeled: your friends on Instagram, without the rabbit hole",
     description,
-    structuredData: true,
+  },
+  {
+    file: "research.html",
+    path: "/research",
+    title: "Instagram, TikTok and your brain: what the research says",
+    headline: "Built to keep you scrolling: what the research says about Instagram, TikTok and your brain",
+    description:
+      "Meta's and TikTok's own research, court records and peer-reviewed studies on how feeds hold attention, what they do to wellbeing, and what a break changes.",
+    published: "2026-11-09",
+    modified: "2026-11-09",
+    about: [
+      ["Problematic social media use", "https://en.wikipedia.org/wiki/Problematic_social_media_use"],
+      ["Attention economy", "https://en.wikipedia.org/wiki/Attention_economy"],
+      ["Infinite scrolling", "https://en.wikipedia.org/wiki/Infinite_scrolling"],
+    ],
+  },
+  {
+    file: "social-media-break.html",
+    path: "/social-media-break",
+    title: "Social media detox: take a break without losing your friends",
+    headline: "How to take a break from social media without losing your friends",
+    description:
+      "A practical guide to a social media break, backed by research: how long to go, what to tell friends, how to keep messages and stories, and what to expect.",
+    published: "2026-11-09",
+    modified: "2026-11-09",
+    about: [
+      ["Digital detox", "https://en.wikipedia.org/wiki/Digital_detox"],
+      ["Doomscrolling", "https://en.wikipedia.org/wiki/Doomscrolling"],
+    ],
   },
   {
     file: "privacy.html",

@@ -157,6 +157,10 @@ main > .notice {
 
 .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
 
+/* Links to read more, one per line. */
+.links { padding: 0; list-style: none; }
+.links li { margin-bottom: 4px; }
+
 /* The privacy policy and other pages of text. */
 
 .document { max-width: 720px; padding-top: 48px; padding-bottom: 56px; }
@@ -166,6 +170,71 @@ main > .notice {
 .document ul { padding-left: 20px; }
 .document li { margin-bottom: 10px; }
 .history { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--hairline); font-size: 14px; }
+
+/* Articles: the research and the guide. Long reads, so a little more air than the policy. */
+
+.article { max-width: 720px; padding-top: 48px; padding-bottom: 56px; }
+.article p, .article ul, .article ol { max-width: none; }
+.article ul { padding-left: 20px; }
+.article li { margin-bottom: 8px; }
+.article h2 { font-size: 22px; margin: 48px 0 12px; scroll-margin-top: 16px; }
+.article h3 { margin: 28px 0 8px; }
+.article .lede { margin-bottom: 14px; }
+
+.kicker {
+  margin-bottom: 12px;
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.byline { color: var(--secondary); font-size: 14px; }
+
+/* The short version, in the same tray as the home page's notice. */
+.summary {
+  margin: 32px 0;
+  padding: 20px 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--tray);
+}
+.article .summary h2 { font-size: 16px; margin: 0 0 10px; }
+.summary ul { margin: 0; }
+.summary li:last-child { margin-bottom: 0; }
+
+.toc { margin: 32px 0; font-size: 15px; }
+.article .toc h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--secondary); margin: 0 0 8px; }
+.toc ol { margin: 0; }
+.toc li { margin-bottom: 4px; }
+
+blockquote {
+  margin: 20px 0;
+  padding: 2px 0 2px 18px;
+  border-left: 3px solid var(--accent);
+  font-size: 18px;
+  line-height: 1.45;
+}
+blockquote p { margin-bottom: 6px; }
+blockquote footer { color: var(--secondary); font-size: 14px; }
+
+/* Studies side by side. Wide tables scroll inside their box, never the page. */
+.table { margin: 20px 0; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.45; }
+th, td { padding: 10px 16px 10px 0; border-top: 1px solid var(--hairline); text-align: left; vertical-align: top; }
+th { color: var(--secondary); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+td:first-child { min-width: 9em; }
+
+/* Inline references, such as (Hunt et al., 2018), go to the list of sources at the end. */
+.cite { white-space: nowrap; }
+.sources { padding-left: 0; list-style: none; font-size: 14px; }
+.sources li { margin-bottom: 12px; padding: 2px 6px; margin-left: -6px; border-radius: 3px; }
+.sources li:target { background: #EEF3F8; }
+
+/* Where to find help, set apart from the rest. */
+.help { margin: 32px 0; padding: 16px 20px; border-left: 3px solid var(--accent); background: var(--tray); font-size: 15px; }
+
+.next { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--hairline); }
 
 /* The footer, small and uppercase like 2016's. */
 
@@ -198,12 +267,35 @@ main > .notice {
   main > .notice { padding: 20px; }
 }
 
+@media (max-width: 760px) {
+  .article { padding-top: 36px; }
+  .article h2 { margin-top: 40px; }
+  blockquote { font-size: 17px; }
+}
+
+/* On phones, each table row becomes a short list: the first cell in bold, then the others, each
+   labelled with its column's heading (build.mjs adds them as data-label). */
+@media (max-width: 600px) {
+  .table table, .table tbody, .table tr, .table td { display: block; }
+  .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .table tr { padding: 12px 0; border-top: 1px solid var(--hairline); }
+  .table tr:last-child { border-bottom: 1px solid var(--hairline); }
+  .table td { padding: 2px 0; border: 0; }
+  .table td:first-child { min-width: 0; font-weight: 500; }
+  .table td + td::before { content: attr(data-label) ": "; color: var(--secondary); }
+}
+
+/* On phones the header keeps Install and Research; Privacy and GitHub stay in the footer. */
+@media (max-width: 480px) {
+  .nav-source { display: none; }
+}
+
 @media (max-width: 420px) {
   .brand-icon { display: none; }
   .wordmark { height: 26px; }
   .bar nav { gap: 16px; }
 }
 
-@media (max-width: 340px) {
-  .nav-source { display: none; }
+@media (max-width: 370px) {
+  .nav-privacy { display: none; }
 }

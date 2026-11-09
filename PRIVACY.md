@@ -32,4 +32,4 @@ Changes to this policy are published in the project's repository, with their dat
 
 ## Contact
 
-Questions or problems: open an issue at [github.com/Mdavoigneau/Unreeled](https://github.com/Mdavoigneau/Unreeled/issues).
+Questions or problems: write to [hello@unreeled.app](mailto:hello@unreeled.app), or open an issue at [github.com/Mdavoigneau/Unreeled](https://github.com/Mdavoigneau/Unreeled/issues).

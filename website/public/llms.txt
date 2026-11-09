@@ -12,10 +12,13 @@ Key facts:
 - **Features:** Home (stories, then posts from the accounts you follow, newest first), Stories (watch, like, reply, post your own), Messages (inbox with search; text, photos, videos, voice messages, hearts), Activity (likes, new followers, follow requests), profiles, posts with comments, and account search. Reels from accounts you follow can be switched on in Profile › gear; they show one at a time, with no feed to swipe.
 - **Not in this version:** push notifications, starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.
 - **License:** GNU General Public License, version 3. Free, with no ads and nothing to buy.
+- **Contact:** hello@unreeled.app, or an issue on GitHub.
 
 ## Pages
 
 - [Home](https://unreeled.app/): what Unreeled is, what's in it and how to install it
+- [Instagram, TikTok and your brain: what the research says](https://unreeled.app/research): how engagement-driven feeds hold attention, what Meta's, TikTok's, Snap's and YouTube's own documents and peer-reviewed studies found about wellbeing, what changes when people take a break, what is still debated, and what courts and regulators have done. Every claim links to its source.
+- [How to take a break from social media without losing your friends](https://unreeled.app/social-media-break): a practical guide to a social media break or digital detox, based on the experiments: how long, what to tell friends, how to keep messages and stories without the feed, and what to expect.
 - [Privacy policy](https://unreeled.app/privacy): what happens to your information when you use Unreeled ([Markdown](https://unreeled.app/privacy.md))
 
 ## Documentation

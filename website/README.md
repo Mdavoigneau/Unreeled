@@ -5,6 +5,8 @@ The project's website: the home page, the privacy policy, and the list of querie
 | Address | From |
 | --- | --- |
 | `/` | `src/index.html` |
+| `/research` | `src/research.html`: what the research says about Instagram, TikTok and your brain |
+| `/social-media-break` | `src/social-media-break.html`: how to take a break from social media without losing your friends |
 | `/privacy` | [PRIVACY.md](../PRIVACY.md), rendered; `/privacy.md` is the Markdown itself |
 | `/queries.json` | [Unreeled/API/Queries.json](../Unreeled/API/Queries.json), byte for byte, cached for 5 minutes |
 | `/sitemap.xml` | written by `build.mjs` |
@@ -25,6 +27,14 @@ npm run dev
 That builds the site into `dist/` and serves it at http://localhost:8787. `npm run build` only builds. Pages are `src/*.html` inside `src/layout.html`, with `src/style.css` inlined; titles, descriptions and the JSON-LD are in `build.mjs`. Response headers are in `public/_headers`.
 
 `llms.txt` sums up the project for AI assistants. Keep it in step with the README when something big changes, such as AltStore PAL becoming available.
+
+### Articles
+
+The research and the guide are articles. In `build.mjs`, each one has a headline (its `<h1>`), the date it was first published, the date it last changed, and what it's about, as Wikipedia articles. Those go into the page's structured data (schema.org `Article`), its Open Graph tags and the sitemap, and the page shows the last change where it says `{{modified}}`. Set `modified` to the day whenever an article's content changes.
+
+Every claim in an article links to an entry in its Sources list, and those entries link to the papers, court records and reporting themselves. When you update an article, check that each source still says what the article says it does.
+
+A `<section class="faq">` on any page also goes into its structured data (schema.org `FAQPage`): each `<h3>` is a question, and what follows it, up to the next `<h3>`, is the answer.
 
 ## Images
 
