@@ -1,0 +1,206 @@
+{
+  "PolarisFeedTimelineRootV2Query": {
+    "doc_id": "29361847640075296",
+    "path": "/graphql/query",
+    "root_field": "xdt_api__v1__feed__timeline__connection",
+    "providers": {
+      "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisAdDebugToolEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisSuggestedUserFeedUnitCardsEnabledrelayprovider": true
+    }
+  },
+  "PolarisFeedRootPaginationCachedQuery_subscribe": {
+    "doc_id": "29356681030682853",
+    "path": "/graphql/query",
+    "root_field": "xdt_api__v1__feed__timeline__connection",
+    "providers": {
+      "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisAdDebugToolEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisSuggestedUserFeedUnitCardsEnabledrelayprovider": true
+    }
+  },
+  "PolarisProfilePageContentQuery": {
+    "doc_id": "40158838120366999",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisProfileInformTreatmentBannerEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisProfileRingsGradientEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": true
+    }
+  },
+  "PolarisProfilePostsQuery": {
+    "doc_id": "40380470024877440",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider": false,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": false
+    }
+  },
+  "PolarisProfilePostsTabContentQuery_connection": {
+    "doc_id": "29507206148877307",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider": false,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider": false
+    }
+  },
+  "PolarisPostRootQuery": {
+    "doc_id": "29034823439507504",
+    "path": "/graphql/query",
+    "root_field": "xdt_api__v1__media__shortcode__web_info",
+    "providers": {
+      "__relay_internal__pv__PolarisAdDebugToolEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisShortDramaEnabledrelayprovider": true,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider": true
+    }
+  },
+  "PolarisPostCommentsContainerQuery": {
+    "doc_id": "29473122745606032",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__PolarisIsMobileWebrelayprovider": true,
+      "__relay_internal__pv__PolarisIsLoggedInrelayprovider": true,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisPinnedCommentsEnabledrelayprovider": false
+    }
+  },
+  "PolarisPostCommentsPaginationQuery": {
+    "doc_id": "40792641187001157",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__PolarisIsMobileWebrelayprovider": true,
+      "__relay_internal__pv__PolarisIsLoggedInrelayprovider": true,
+      "__relay_internal__pv__PolarisThreadsStyleCommentsEnabledrelayprovider": false,
+      "__relay_internal__pv__PolarisPinnedCommentsEnabledrelayprovider": false
+    }
+  },
+  "PolarisSearchBoxRefetchableQuery": {
+    "doc_id": "27706427925724183",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "PolarisStoriesV3TrayContainerQuery": {
+    "doc_id": "38657722893875056",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "PolarisStoriesV3ReelPageStandaloneQuery": {
+    "doc_id": "29341065465524437",
+    "path": "/graphql/query",
+    "root_field": "xdt_api__v1__feed__reels_media",
+    "providers": {
+      "__relay_internal__pv__PolarisCommunityNoteStoriesLabelEnabledrelayprovider": true
+    }
+  },
+  "PolarisStoriesV3SeenMutation": {
+    "doc_id": "26234228992942885",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "PolarisDirectInboxMobileQuery": {
+    "doc_id": "29635390039379294",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__IGDIsProfessionalAccountGKrelayprovider": false,
+      "__relay_internal__pv__IGDPinnedThreadsRenderEnabledGKrelayprovider": true,
+      "__relay_internal__pv__IGDMaxUnreadMessagesCountrelayprovider": 5,
+      "__relay_internal__pv__IGDThreadListActionsEnabledGKrelayprovider": true
+    }
+  },
+  "IGDThreadListOffMsysPaginationQuery": {
+    "doc_id": "29461858216751557",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__IGDPinnedThreadsRenderEnabledGKrelayprovider": true,
+      "__relay_internal__pv__IGDMaxUnreadMessagesCountrelayprovider": 5,
+      "__relay_internal__pv__IGDThreadListActionsEnabledGKrelayprovider": true
+    }
+  },
+  "IGDThreadDetailQuery": {
+    "doc_id": "28655271404173792",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__IGDEnableOffMsysChatThemesQErelayprovider": false,
+      "__relay_internal__pv__IGDInitialMessagePageCountrelayprovider": 20
+    }
+  },
+  "IGDMessageListOffMsysQuery": {
+    "doc_id": "28947835764870439",
+    "path": "/api/graphql",
+    "providers": {
+      "__relay_internal__pv__IGDInitialMessagePageCountrelayprovider": 20
+    }
+  },
+  "IGDirectTextSendMutation": {
+    "doc_id": "28737274835943013",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "useIGDMarkThreadAsReadMutation": {
+    "doc_id": "27399783383056109",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "useIGDMarkThreadAsReadValidationMutation": {
+    "doc_id": "35211594988486314",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "usePolarisLikeMediaXIGLikeMutation": {
+    "doc_id": "27182485238052618",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "usePolarisLikeMediaXIGUnlikeMutation": {
+    "doc_id": "27345296031770102",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "usePolarisStoriesV4LikeMutationLikeMutation": {
+    "doc_id": "26938887309082050",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "usePolarisStoriesV4LikeMutationUnlikeMutation": {
+    "doc_id": "26510485515280697",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "IGDirectStoryShareReplyMutation": {
+    "doc_id": "29327482173525974",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "PolarisActivityFeedStoriesViewQuery": {
+    "doc_id": "29009736035346676",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "IGDirectMediaSendMutation": {
+    "doc_id": "28887524104237595",
+    "path": "/api/graphql",
+    "providers": {}
+  },
+  "IGDirectReactionSendMutation": {
+    "doc_id": "28788023287533800",
+    "path": "/api/graphql",
+    "providers": {}
+  }
+}

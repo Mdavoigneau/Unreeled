@@ -1,0 +1,9 @@
+// Signing for the app target. Don't put your own team here: copy Local.example.xcconfig to
+// Local.xcconfig (git ignores it) and set your team and bundle ID there.
+//
+// Without it, the app builds for the simulator under the placeholder bundle ID below.
+
+DEVELOPMENT_TEAM =
+UNREELED_BUNDLE_ID = com.example.unreeled
+
+#include? "Local.xcconfig"

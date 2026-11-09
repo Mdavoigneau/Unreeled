@@ -1,0 +1,31 @@
+# How it works
+
+- **Login.** Instagram's own login page runs in a web view, and its cookies stay on the phone in a WebKit store ([Session.swift](../Unreeled/App/Session.swift)). Once the session cookie appears, the app switches to the native screens.
+- **Requests.** [InstagramAPI.swift](../Unreeled/API/InstagramAPI.swift) runs every request as `fetch()` inside a hidden web view showing a blank page on www.instagram.com. That way each request carries the website's cookies and the browser's own headers, and the session never leaves WebKit.
+- **GraphQL.** Nearly everything the website loads comes from GraphQL queries that it sends by ID. [Queries.json](../Unreeled/API/Queries.json) lists the ones the app uses: the ID, the endpoint, and the feature flags each query expects. The app sends them with the same parameters and headers as the website. It reads the session tokens they need (`fb_dtsg`, `lsd`) from a website page's HTML and keeps them in the Keychain. [Endpoints.swift](../Unreeled/API/Endpoints.swift) has the variables for each screen.
+- **Query updates.** [QueryUpdates.swift](../Unreeled/API/QueryUpdates.swift) downloads the project's current Queries.json from `https://unreeled.app/queries.json`, or from this repository on GitHub if that fails. It checks at launch at most every 6 hours, and right after a query fails at most every 10 minutes; after a failure, a query whose entry changed is tried once more. Only entries for queries the app already sends are taken, and only if they look like Instagram's (a numeric ID, one of the two GraphQL endpoints, `__relay_internal__pv__` flags). A list taken by an earlier version of the app is set aside when the app updates. About shows whether the app runs on its own list or a newer one.
+- **Comet GET.** A few website calls, such as Direct search, are GETs that need the page's `async_get_token` and the website's full set of parameters. `cometGET` in InstagramAPI.swift sends them the way the website's `cometAsyncFetch` does.
+- **Home** asks for the website's Following feed (`instagram.com/?variant=following`). The default ranked feed turned out to be mostly reels, Explore suggestions and ads.
+- **Models.** Responses decode into [Models.swift](../Unreeled/API/Models.swift), where nearly every field is optional, so a field Instagram drops doesn't break a screen.
+- **Screens** are in [Views](../Unreeled/Views). Images go through a small in-memory cache on top of URLCache, so scrolling back is instant.
+- **Web screens** ([WebScreen.swift](../Unreeled/Web/WebScreen.swift)) inject [Filter.js](../Unreeled/Web/Filter.js) with [Rules.json](../Unreeled/Web/Rules.json). Links to other sites open in Safari, and links that would open Instagram's app are ignored.
+
+## Endpoints, and how each was tested
+
+**Messages** use the website's own Direct queries (`PolarisDirectInboxMobileQuery`, `IGDThreadDetailQuery`, `IGDMessageListOffMsysQuery`) and mutations (`IGDirectTextSendMutation`, `useIGDMarkThreadAsReadMutation`), with the variables the website sends. Tested: a text message sent to a test conversation arrived, and the conversation was marked read.
+
+**Photos and videos in messages** are uploaded the way the website's chat does it: a form post to `/ajax/mercury/upload.php` (the file in `farr`), which returns an attachment ID, then `IGDirectMediaSendMutation` with that ID. Tested: a photo and a 3-second video reached a test conversation, and the video played back from Instagram's copy.
+
+**Voice messages** are sent the way the website's recorder does it: Opus audio in an Ogg file named `audioclip-<time>-<length in ms>.ogg`, uploaded to the same `/ajax/mercury/upload.php` with `voice_clip=true` and a 64-level waveform, then sent with `IGDirectMediaSendMutation`. The app records 48 kHz mono and encodes Opus itself ([OggOpus.swift](../Unreeled/API/OggOpus.swift)). Tested: a 21-second test tone reached a test conversation and played back from Instagram's copy. A Debug build launched with `-testVoiceClip YES` records that tone instead of the microphone.
+
+**Hearts** use the website's `IGDirectReactionSendMutation`: the message's ID, the thread's ID, `reaction_status` created or deleted, and the heart as U+2764 without the emoji style mark, which is how the website's code converts it. Tested: a heart was put on a message and taken off again; Instagram accepted both, and its copy of the conversation showed no heart afterwards.
+
+**Direct search** uses `/api/v1/direct_v2/ranked_recipients/?mode=universal&show_threads=true` through `cometGET`. A person found that way opens by their `interop_messaging_user_fbid`, which `IGDThreadDetailQuery` accepts as the thread ID, as on the website.
+
+**Stories** are posted the way the website's story camera does it. A photo goes to `i.instagram.com/rupload_igphoto/fb_uploader_<upload id>`; a video goes to `rupload_igvideo/story_<upload id>`, followed by its first frame as the cover. What they are travels in `X-Entity-*` and `X-Instagram-Rupload-Params` headers. Then `/api/v1/media/configure_to_story/` publishes it, and `/api/v1/web/create/<id>/delete/` deletes it. Requests to i.instagram.com carry only the headers the website sends there: no CSRF token or claim, or WebKit blocks them. Tested: a test photo was posted and deleted. Video stories haven't been tried.
+
+**Story likes** use the website's `usePolarisStoriesV4LikeMutation…` mutations with the item's ID. **Story replies** use `IGDirectStoryShareReplyMutation`, as its current stories viewer sends it (the media ID alone, the reel ID, and the owner as recipient). Tested: a reply reached its recipient, and a like then an unlike both showed when the story was loaded again.
+
+**Activity** uses `PolarisActivityFeedStoriesViewQuery`, which the website loads with the page rather than as a request, so it was found in the website's scripts (see [MAINTAINING.md](MAINTAINING.md)). Follow requests use `/api/v1/friendships/approve/<id>/` and `/ignore/<id>/`, as the website does.
+
+**Likes** use the website's own like and unlike mutations (`usePolarisLikeMediaXIG…Mutation`), copied from a recording of the website. They send the post's `organic_tracking_token`, as the website does. Tested: a like and an unlike both showed when the post was fetched again.

@@ -1,0 +1,23 @@
+[
+  {
+    "id": "reels-tab",
+    "title": "Hide the Reels tab",
+    "enabled": true,
+    "hide": [
+      "a[href='/reels/']"
+    ],
+    "redirect": [
+      { "from": "^/reels/audio/.*$", "to": "/" },
+      { "from": "^/reels/([\\w-]+)/?(\\?.*)?$", "to": "/reel/$1/" },
+      { "from": "^/reels/?(\\?.*)?$", "to": "/" }
+    ]
+  },
+  {
+    "id": "explore",
+    "title": "Skip the Explore grid, keep search",
+    "enabled": true,
+    "redirect": [
+      { "from": "^/explore/?(\\?.*)?$", "to": "/explore/search/" }
+    ]
+  }
+]

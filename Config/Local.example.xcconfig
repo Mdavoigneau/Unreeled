@@ -1,0 +1,8 @@
+// Your own signing settings. Copy this file to Local.xcconfig in this folder and fill it in.
+//
+// DEVELOPMENT_TEAM: your team ID, from developer.apple.com › Account › Membership, or from the
+// Signing & Capabilities tab in Xcode after you pick your team there once.
+// UNREELED_BUNDLE_ID: any ID that's yours, such as com.yourname.Unreeled.
+
+DEVELOPMENT_TEAM = ABCDE12345
+UNREELED_BUNDLE_ID = com.yourname.Unreeled
