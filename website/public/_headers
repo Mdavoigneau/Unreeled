@@ -1,0 +1,20 @@
+# Response headers for the files Cloudflare serves (https://developers.cloudflare.com/workers/static-assets/headers/).
+
+# Installed apps download this list (Unreeled/API/QueryUpdates.swift): a short cache, so a new list
+# reaches everyone within minutes, and kept out of search results.
+/queries.json
+  Cache-Control: public, max-age=300
+  X-Robots-Tag: noindex
+
+# The policy's Markdown, for AI assistants; search engines should show the page instead.
+/privacy.md
+  Link: <https://unreeled.app/privacy>; rel="canonical"
+
+# Pages add a hash of each image to its address (build.mjs), so images can be kept for a year.
+/images/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Content-Security-Policy: default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'

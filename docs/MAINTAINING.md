@@ -8,7 +8,7 @@ Instagram gives a query a new ID whenever it changes it, and the old ID stops wo
 2. **Update its entry** in [Queries.json](../Unreeled/API/Queries.json): the `doc_id`, and the `providers` if the website now sends different flags. If the variables changed too, Endpoints.swift needs a new version of the app.
 3. **Check the file is valid JSON** (`python3 -m json.tool Unreeled/API/Queries.json > /dev/null`) and push it to `main`.
 
-Installed apps then pick it up without a new version. They download `https://unreeled.app/queries.json`, or this file on GitHub if the site doesn't answer, at launch at most every 6 hours and right after a query fails at most every 10 minutes. See [QueryUpdates.swift](../Unreeled/API/QueryUpdates.swift).
+Installed apps then pick it up without a new version. They download `https://unreeled.app/queries.json`, or this file on GitHub if the site doesn't answer, at launch at most every 6 hours and right after a query fails at most every 10 minutes. See [QueryUpdates.swift](../Unreeled/API/QueryUpdates.swift). The site rebuilds from `main` on every push that changes the file, within a few minutes ([website/README.md](../website/README.md)).
 
 Rules for the list, since every installed version reads it:
 

@@ -1,0 +1,93 @@
+<main id="main">
+
+<section class="intro" aria-labelledby="tagline">
+  <div class="intro-text">
+    <picture>
+      <source srcset="/images/icon-384.avif" type="image/avif">
+      <img class="app-icon" src="/images/icon-384.png" width="112" height="112" alt="The Unreeled app icon: a white U on steel blue">
+    </picture>
+    <h1 id="tagline">Your friends on Instagram, without the rabbit hole.</h1>
+    <p class="lede">Unreeled is a free, open-source iPhone app for Instagram that shows the people you follow and nothing else: their posts newest first, their stories, your messages and your activity. No Reels feed, no Explore, no suggested posts, no ads.</p>
+    <p class="actions">
+      <a class="button" href="#install">How to install</a>
+      <a class="button button-plain" href="https://github.com/Mdavoigneau/Unreeled">Source code</a>
+    </p>
+  </div>
+  <figure class="phone">
+    <picture>
+      <source srcset="/images/welcome.avif" type="image/avif">
+      <img src="/images/welcome.png" width="300" height="652" alt="Unreeled's first screen on an iPhone: the wordmark and tagline, then three points, Just your friends, Unofficial and Private, above an I Understand button.">
+    </picture>
+    <figcaption>What Unreeled shows before you log in</figcaption>
+  </figure>
+</section>
+
+<section class="notice" aria-labelledby="unofficial">
+  <h2 id="unofficial">Unofficial</h2>
+  <p>Unreeled isn't made or endorsed by Instagram or Meta. It talks to Instagram the way instagram.com does, from your phone. Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it. Use it at your own risk.</p>
+</section>
+
+<section aria-labelledby="features">
+  <h2 id="features">What's in it</h2>
+  <dl class="features">
+    <div><dt>Home</dt><dd>Stories on top, then posts from the accounts you follow, newest first.</dd></div>
+    <div><dt>Stories</dt><dd>Watch, like and reply; post a photo or video to yours.</dd></div>
+    <div><dt>Messages</dt><dd>Your inbox with search; text, photos, videos and voice messages; hearts. Posts and reels sent to you open on their own, with no feed after them.</dd></div>
+    <div><dt>Activity</dt><dd>Likes, new followers and follow requests.</dd></div>
+    <div><dt>Profiles and posts</dt><dd>With comments, and account search.</dd></div>
+    <div><dt>Instant</dt><dd>What you do shows at once and goes to Instagram in the background, with a "✓ Delivered" once it's there. Screens open on what the app saved last time.</dd></div>
+    <div><dt>A 2016 look</dt><dd>Flat white bars, Helvetica Neue and one steel-blue accent.</dd></div>
+    <div><dt>Reels, if you want them</dt><dd>Reels from accounts you follow can be switched on in Profile › gear. They then show one at a time, with no feed to swipe.</dd></div>
+  </dl>
+  <p><a href="https://github.com/Mdavoigneau/Unreeled/blob/main/docs/FEATURES.md">Every screen in detail</a></p>
+</section>
+
+<section id="install" aria-labelledby="install-title">
+  <h2 id="install-title">Install</h2>
+  <div class="columns">
+    <div>
+      <h3>In the EU, Japan and Brazil</h3>
+      <p>From <a href="https://altstore.io">AltStore PAL</a>, an alternative app marketplace for iPhone. <strong>Coming soon.</strong></p>
+    </div>
+    <div>
+      <h3>Anywhere else</h3>
+      <p>Build it yourself with Xcode. With a free Apple ID, the app has to be reinstalled every 7 days.</p>
+      <ol>
+        <li>Install Xcode 27 or later and clone <a href="https://github.com/Mdavoigneau/Unreeled">the repository</a>.</li>
+        <li>Copy <code>Config/Local.example.xcconfig</code> to <code>Config/Local.xcconfig</code>, and set your team ID and a bundle ID of your own in it.</li>
+        <li>Open <code>Unreeled.xcodeproj</code>, pick the <b>Unreeled for iPhone</b> scheme and your iPhone, and press ⌘R.</li>
+        <li>The first time: turn on Developer Mode on the iPhone (Settings › Privacy &amp; Security, then restart), and trust your Apple ID under Settings › General › VPN &amp; Device Management.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="private">
+  <h2 id="private">Private</h2>
+  <p>Unreeled collects nothing. You log in on Instagram's own page, and your account goes only between your phone and Instagram. There are no analytics, no tracking and no third-party code. The only other request the app makes downloads the project's list of Instagram query IDs.</p>
+  <p><a href="/privacy">Privacy policy</a></p>
+</section>
+
+<section aria-labelledby="how">
+  <h2 id="how">How it works</h2>
+  <p>Instagram's website loads nearly everything through GraphQL queries that it sends by ID. Unreeled sends the same queries, with the same parameters and headers, from a hidden web view on www.instagram.com. That way each request carries the website's cookies and the browser's own headers, and the session never leaves your phone. The screens on top are native SwiftUI.</p>
+  <p>When Instagram changes a query, its ID changes and the screen that uses it stops loading. The fix is one edit to the project's list of queries. Installed apps pick up the new list within 6 hours, or right away when a query fails, with no new version needed.</p>
+  <p><a href="https://github.com/Mdavoigneau/Unreeled/blob/main/docs/HOW-IT-WORKS.md">How it works, in detail</a></p>
+</section>
+
+<section aria-labelledby="not-yet">
+  <h2 id="not-yet">Not in this version</h2>
+  <p>Push notifications, starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.</p>
+</section>
+
+<section aria-labelledby="questions">
+  <h2 id="questions">Questions</h2>
+  <h3>Could Instagram restrict my account?</h3>
+  <p>It could. Instagram doesn't approve apps like this one, and its checks for automated behaviour look at more than how requests are made. Unreeled sends only requests the website itself sends, and nothing automated: no background likes, follows or scraping. Keep likes and follows at a human pace.</p>
+  <h3>Why isn't it on the App Store?</h3>
+  <p>App Review requires permission from the services an app uses. In the EU, Japan and Brazil, apps can also be distributed through alternative marketplaces after Apple's lighter check, notarization. That's how Unreeled is coming to AltStore PAL.</p>
+  <h3>What does it cost?</h3>
+  <p>Nothing. Unreeled is free software: you can share and change it under the terms of the GNU General Public License, version 3. Its code, its documentation and this website are on <a href="https://github.com/Mdavoigneau/Unreeled">GitHub</a>, where issues and pull requests are welcome.</p>
+</section>
+
+</main>

@@ -1,0 +1,209 @@
+/* The app's look (Unreeled/App/Theme.swift): white, hairlines, Helvetica Neue, one steel blue. */
+:root {
+  --ink: #262626;
+  /* The app's #8E8E8E, a little darker so small text stays readable on the web. */
+  --secondary: #737373;
+  --accent: #3F729B;
+  --accent-dark: #2B5273;
+  --hairline: #DBDBDB;
+  --field: #EFEFEF;
+  --tray: #FAFAFA;
+  --width: 935px;
+  color-scheme: light;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: #FFFFFF;
+  color: var(--ink);
+  font: 16px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { color: var(--accent-dark); }
+
+img { max-width: 100%; height: auto; }
+
+code {
+  font: 14px/1.4 Menlo, Consolas, monospace;
+  background: var(--field);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.skip {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  background: var(--accent);
+  color: #FFFFFF;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+.skip:focus { top: 12px; }
+
+/* The bar on top, flat white with a hairline, as in the app. */
+
+.site-header { border-bottom: 1px solid var(--hairline); }
+
+.bar {
+  max-width: var(--width);
+  height: 60px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.brand-icon { display: block; width: 32px; height: 32px; }
+.wordmark { display: block; width: auto; height: 30px; }
+
+.bar nav { display: flex; gap: 22px; }
+.bar nav a { color: var(--ink); font-size: 14px; font-weight: 500; text-decoration: none; }
+.bar nav a:hover, .bar nav a[aria-current] { color: var(--accent); }
+
+/* Content */
+
+main { max-width: var(--width); margin: 0 auto; padding: 0 20px; }
+
+main > section { padding: 40px 0; border-bottom: 1px solid var(--hairline); }
+main > section:last-child { border-bottom: 0; }
+
+h1, h2, h3 { margin: 0; }
+h2 { font-size: 22px; line-height: 1.3; font-weight: 500; margin-bottom: 16px; }
+h3 { font-size: 16px; line-height: 1.4; font-weight: 500; margin: 24px 0 6px; }
+h2 + h3, .columns h3 { margin-top: 0; }
+
+p, ol, ul { margin: 0 0 12px; max-width: 40em; }
+p:last-child { margin-bottom: 0; }
+li { margin-bottom: 6px; }
+ol { padding-left: 22px; }
+
+.intro {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 64px;
+  padding: 56px 0;
+}
+
+.app-icon { display: block; width: 112px; height: 112px; margin: 0 0 24px -4px; }
+
+h1 {
+  font-size: 34px;
+  line-height: 1.2;
+  font-weight: 300;
+  letter-spacing: -0.01em;
+  margin-bottom: 16px;
+}
+
+.lede { font-size: 18px; line-height: 1.5; color: var(--secondary); margin-bottom: 28px; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.button {
+  display: inline-block;
+  padding: 9px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #FFFFFF;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
+  text-decoration: none;
+}
+.button:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: #FFFFFF; }
+.button-plain { background: #FFFFFF; border-color: var(--hairline); color: var(--ink); }
+.button-plain:hover { background: var(--tray); border-color: var(--hairline); color: var(--ink); }
+
+/* A screenshot in a plain, hairline phone. */
+.phone { width: 300px; margin: 11px; }
+.phone img {
+  display: block;
+  border: 1px solid var(--field);
+  border-radius: 42px;
+  box-shadow: 0 0 0 10px #FFFFFF, 0 0 0 11px var(--hairline);
+}
+.phone figcaption { margin-top: 26px; color: var(--secondary); font-size: 13px; text-align: center; }
+
+/* Before anything else: what using Unreeled means for your account. */
+main > .intro { border-bottom: 0; }
+main > .notice {
+  padding: 24px 28px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--tray);
+}
+.notice h2 { font-size: 18px; margin-bottom: 8px; }
+
+.features {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 40px;
+  margin: 0 0 20px;
+}
+.features div { padding: 14px 0; border-top: 1px solid var(--hairline); }
+.features dt { font-weight: 500; }
+.features dd { margin: 2px 0 0; color: var(--secondary); }
+
+.columns { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+
+/* The privacy policy and other pages of text. */
+
+.document { max-width: 720px; padding-top: 48px; padding-bottom: 56px; }
+.document h1 { margin-bottom: 8px; }
+.document h1 + p { color: var(--secondary); margin-bottom: 28px; }
+.document h2 { font-size: 20px; margin: 32px 0 10px; }
+.document ul { padding-left: 20px; }
+.document li { margin-bottom: 10px; }
+.history { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--hairline); font-size: 14px; }
+
+/* The footer, small and uppercase like 2016's. */
+
+.site-footer {
+  max-width: var(--width);
+  margin: 0 auto;
+  padding: 28px 20px 48px;
+  border-top: 1px solid var(--hairline);
+  color: var(--secondary);
+  font-size: 13px;
+}
+.site-footer nav { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 10px; }
+.site-footer nav a {
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.site-footer nav a:hover { color: var(--accent); }
+
+@media (max-width: 760px) {
+  .intro { grid-template-columns: 1fr; gap: 44px; padding: 36px 0 44px; }
+  .phone { width: 260px; margin: 11px auto; }
+  h1 { font-size: 28px; }
+  .lede { font-size: 17px; }
+  .features, .columns { grid-template-columns: 1fr; }
+  .columns { gap: 28px; }
+  main > .notice { padding: 20px; }
+}
+
+@media (max-width: 420px) {
+  .brand-icon { display: none; }
+  .wordmark { height: 26px; }
+  .bar nav { gap: 16px; }
+}
+
+@media (max-width: 340px) {
+  .nav-source { display: none; }
+}

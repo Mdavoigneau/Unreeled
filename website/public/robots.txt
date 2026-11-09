@@ -1,0 +1,5 @@
+# Search engines and AI assistants are welcome to read everything here.
+User-agent: *
+Allow: /
+
+Sitemap: https://unreeled.app/sitemap.xml

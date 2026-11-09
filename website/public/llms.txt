@@ -1,0 +1,32 @@
+# Unreeled
+
+> Unreeled is a free, open-source iPhone app for Instagram that shows the people you follow and nothing else: their posts newest first, their stories, your messages and your activity. No Reels feed, no Explore, no suggested posts, no ads. It is unofficial: not made or endorsed by Instagram or Meta.
+
+Key facts:
+
+- **Platform:** iPhone, iOS 18 or later. Native SwiftUI screens. It talks to Instagram the way instagram.com does, from the phone, through a hidden web view on www.instagram.com, so the session never leaves the phone.
+- **Install:** from AltStore PAL in the EU, Japan and Brazil (coming soon). Anywhere else, build it from source with Xcode; with a free Apple ID, the app has to be reinstalled every 7 days.
+- **Not on the App Store:** App Review requires permission from the services an app uses.
+- **Risk:** Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it. Use it at your own risk, and keep likes and follows at a human pace.
+- **Privacy:** Unreeled collects nothing. No accounts of its own, no analytics, no tracking, no third-party code. You log in on Instagram's own page. The only other request the app makes downloads the project's list of Instagram query IDs from this site.
+- **Features:** Home (stories, then posts from the accounts you follow, newest first), Stories (watch, like, reply, post your own), Messages (inbox with search; text, photos, videos, voice messages, hearts), Activity (likes, new followers, follow requests), profiles, posts with comments, and account search. Reels from accounts you follow can be switched on in Profile › gear; they show one at a time, with no feed to swipe.
+- **Not in this version:** push notifications, starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.
+- **License:** GNU General Public License, version 3. Free, with no ads and nothing to buy.
+
+## Pages
+
+- [Home](https://unreeled.app/): what Unreeled is, what's in it and how to install it
+- [Privacy policy](https://unreeled.app/privacy): what happens to your information when you use Unreeled ([Markdown](https://unreeled.app/privacy.md))
+
+## Documentation
+
+- [README](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/README.md): overview, install, building it yourself
+- [Features](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/FEATURES.md): every screen in detail, and known limits
+- [How it works](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/HOW-IT-WORKS.md): the website's GraphQL queries the app sends, and how each was tested
+- [Maintaining](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/MAINTAINING.md): what to do when Instagram changes a query
+
+## Optional
+
+- [Source code](https://github.com/Mdavoigneau/Unreeled): the repository on GitHub, with issues
+- [Releasing](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/RELEASING.md): notarization and AltStore PAL
+- [Query list](https://unreeled.app/queries.json): the Instagram query IDs installed apps download to stay current
