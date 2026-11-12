@@ -7,7 +7,7 @@
 //   node tools/pushtest.mjs registration [label] [--json]
 //                                                 what to register: the push address, p256dh, auth
 //   node tools/pushtest.mjs selftest [label]      send the relay a push made here, as Instagram would
-//   node tools/pushtest.mjs read [--after <n>] [--show]
+//   node tools/pushtest.mjs read [--after <n>] [--show] [--all]
 //                                                 what the relay recorded, decrypted here
 //
 // A label (phone, simulator…) goes at the end of the push address, so the log says which
@@ -21,11 +21,13 @@ import { join } from "node:path";
 const folder = join(homedir(), ".config", "unreeled", "push-test");
 const keysFile = join(folder, "keys.json");
 const secretsFile = join(folder, "relay-secrets.json");
+/** Facebook's and Instagram's own networks, by number. */
+const metaNetworks = new Set([32934, 54115, 63293, 149642]);
 
 const [command, ...args] = process.argv.slice(2);
 const commands = { keys: makeKeys, relay: setRelay, registration, selftest: selfTest, read };
 if (!commands[command]) {
-	console.error("Usage: node tools/pushtest.mjs keys | relay <address> | registration [label] [--json] | selftest [label] | read [--after <n>] [--show]");
+	console.error("Usage: node tools/pushtest.mjs keys | relay <address> | registration [label] [--json] | selftest [label] | read [--after <n>] [--show] [--all]");
 	process.exit(2);
 }
 await commands[command]();
@@ -138,6 +140,9 @@ async function selfTest() {
  * Lists what the relay recorded. A notification's text stays out of the output unless `--show`
  * is given: by default each field shows as its kind and length, apart from the notification's
  * type, its time and the shape of its link.
+ *
+ * The relay also records requests to other addresses, mostly the internet's scanners. Those from
+ * Meta's networks are listed, the rest are counted, and `--all` lists them too.
  */
 async function read() {
 	const keys = load();
@@ -149,8 +154,19 @@ async function read() {
 	});
 	if (!response.ok) throw new Error(`The relay answered ${response.status}`);
 	const rows = await response.json();
+	let others = 0;
 	for (const row of rows) {
 		const { headers, sender } = row;
+		if (row.path) {
+			// Not the push address.
+			if (!args.includes("--all") && !metaNetworks.has(sender.asn)) {
+				others += 1;
+				continue;
+			}
+			console.log(`#${row.id}  ${row.received}  ${row.method} ${row.path}  ${row.bytes} bytes  from AS${sender.asn ?? "?"} ${sender.network ?? "?"} (${sender.country ?? "?"})  [not the push address]`);
+			if (headers["user-agent"]) console.log(`     user-agent: ${headers["user-agent"]}`);
+			continue;
+		}
 		const to = row.label ? `  to "${row.label}"` : "";
 		console.log(`#${row.id}  ${row.received}  ${row.method}${to}  ${row.bytes} bytes  from AS${sender.asn ?? "?"} ${sender.network ?? "?"} (${sender.country ?? "?"})`);
 		const notable = ["content-encoding", "content-type", "ttl", "urgency", "topic", "user-agent"]
@@ -173,7 +189,9 @@ async function read() {
 			console.log(`     couldn't decrypt: ${error.message}`);
 		}
 	}
-	console.log(rows.length ? `${rows.length} recorded after #${after}` : `Nothing recorded after #${after}`);
+	const listed = rows.length - others;
+	const hidden = others ? ` (and ${others} to other addresses from elsewhere: --all lists them)` : "";
+	console.log(listed ? `${listed} recorded after #${after}${hidden}` : `Nothing recorded after #${after}${hidden}`);
 }
 
 function option(name) {

@@ -4,6 +4,9 @@ import { env } from "cloudflare:workers";
 // README.md). It records each request to the push address and answers as a push service does.
 // It can't read the notifications: they're encrypted for a key that stays on the Mac running the
 // test.
+//
+// Requests to any other address are recorded too, without who sent them: if Instagram calls
+// somewhere unexpected, the log should show it.
 
 /** A web push message is at most about 4 KB. Anything much larger is cut. */
 const maxBody = 16 * 1024;
@@ -11,32 +14,54 @@ const maxBody = 16 * 1024;
 export default {
 	async fetch(request): Promise<Response> {
 		const url = new URL(request.url);
-		// The push address, with an optional label after it that says which registration it's for:
-		// /push/<secret> or /push/<secret>/phone.
-		const push = url.pathname.match(/^\/push\/([^/]+)(?:\/([a-z0-9-]{1,24}))?$/);
-		if (push && (await same(push[1]!, env.PUSH_ID))) {
-			return record(request, url, push[2] ?? "");
-		}
 		if (url.pathname === "/log" && request.method === "GET") {
 			const token = request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
 			if (await same(token, env.READ_TOKEN)) return log(url);
 		}
+		// The push address, with an optional label after it that says which registration it's for:
+		// /push/<secret> or /push/<secret>/phone.
+		const push = url.pathname.match(/^\/push\/([^/]+)(?:\/([a-z0-9-]{1,24}))?$/);
+		if (push && (await same(push[1]!, env.PUSH_ID))) {
+			await record(request, { label: push[2] ?? "" });
+			if (request.method !== "POST") {
+				return new Response(null, { status: 405, headers: { Allow: "POST" } });
+			}
+			// What a push service answers once it has the message (RFC 8030, section 5).
+			return new Response(null, {
+				status: 201,
+				headers: {
+					Location: `${url.origin}/message/${crypto.randomUUID()}`,
+					TTL: request.headers.get("TTL") ?? "0",
+				},
+			});
+		}
+		await record(request, { path: url.pathname.slice(0, 200) + (url.search ? "?…" : "") });
 		return new Response("Not found\n", { status: 404 });
 	},
 } satisfies ExportedHandler;
 
-/** Keeps a request to the push address: when, from where, its headers and its body as sent. */
-async function record(request: Request, url: URL, label: string): Promise<Response> {
+/**
+ * Keeps a request: when, from which network, its headers and its body as sent. One to the push
+ * address is kept with its label and the sender's address. Any other is kept with its path, and
+ * without the sender's address or the headers that carry it.
+ */
+async function record(request: Request, to: { label: string } | { path: string }): Promise<void> {
 	const body = new Uint8Array(await request.arrayBuffer());
+	const isPush = "label" in to;
 	const headers = Object.fromEntries(request.headers);
+	if (!isPush) {
+		for (const name of ["cf-connecting-ip", "x-real-ip", "x-forwarded-for", "true-client-ip"]) delete headers[name];
+	}
 	const sender = {
-		ip: request.headers.get("CF-Connecting-IP"),
+		ip: isPush ? request.headers.get("CF-Connecting-IP") : null,
 		asn: request.cf?.asn,
 		network: request.cf?.asOrganization,
 		country: request.cf?.country,
 	};
 	await table();
-	await env.DB.prepare("INSERT INTO pushes (received, method, headers, sender, bytes, body, label) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	await env.DB.prepare(
+		"INSERT INTO pushes (received, method, headers, sender, bytes, body, label, path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+	)
 		.bind(
 			new Date().toISOString(),
 			request.method,
@@ -44,27 +69,17 @@ async function record(request: Request, url: URL, label: string): Promise<Respon
 			JSON.stringify(sender),
 			body.length,
 			base64(body.subarray(0, maxBody)),
-			label,
+			isPush ? to.label : "",
+			isPush ? "" : to.path,
 		)
 		.run();
-	if (request.method !== "POST") {
-		return new Response(null, { status: 405, headers: { Allow: "POST" } });
-	}
-	// What a push service answers once it has the message (RFC 8030, section 5).
-	return new Response(null, {
-		status: 201,
-		headers: {
-			Location: `${url.origin}/message/${crypto.randomUUID()}`,
-			TTL: request.headers.get("TTL") ?? "0",
-		},
-	});
 }
 
 /** What was recorded after the entry numbered `after`, oldest first. */
 async function log(url: URL): Promise<Response> {
 	await table();
 	const after = Number(url.searchParams.get("after")) || 0;
-	const { results } = await env.DB.prepare("SELECT * FROM pushes WHERE id > ? ORDER BY id LIMIT 200").bind(after).all();
+	const { results } = await env.DB.prepare("SELECT * FROM pushes WHERE id > ? ORDER BY id LIMIT 500").bind(after).all();
 	return Response.json(
 		results.map((row) => ({
 			...row,
@@ -80,10 +95,12 @@ let tableReady: Promise<unknown> | undefined;
 async function table() {
 	tableReady ??= (async () => {
 		await env.DB.exec(
-			"CREATE TABLE IF NOT EXISTS pushes (id INTEGER PRIMARY KEY AUTOINCREMENT, received TEXT NOT NULL, method TEXT NOT NULL, headers TEXT NOT NULL, sender TEXT NOT NULL, bytes INTEGER NOT NULL, body TEXT NOT NULL, label TEXT NOT NULL DEFAULT '')",
+			"CREATE TABLE IF NOT EXISTS pushes (id INTEGER PRIMARY KEY AUTOINCREMENT, received TEXT NOT NULL, method TEXT NOT NULL, headers TEXT NOT NULL, sender TEXT NOT NULL, bytes INTEGER NOT NULL, body TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', path TEXT NOT NULL DEFAULT '')",
 		);
-		// A table made before labels existed gets the column. On any other, this fails and is ignored.
-		await env.DB.exec("ALTER TABLE pushes ADD COLUMN label TEXT NOT NULL DEFAULT ''").catch(() => {});
+		// A table made before these columns existed gets them. On any other, this fails and is ignored.
+		for (const column of ["label", "path"]) {
+			await env.DB.exec(`ALTER TABLE pushes ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`).catch(() => {});
+		}
 	})().catch((error: unknown) => {
 		tableReady = undefined;
 		throw error;

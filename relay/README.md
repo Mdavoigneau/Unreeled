@@ -42,6 +42,8 @@ Node 22.18 or later, and `npm install` in this folder once.
    Nothing shows on the phone yet: the relay only records. To try these screens without registering anything, launch a Debug build with `-pushTestDryRun YES`.
 5. **Read.** `node tools/pushtest.mjs read` lists what arrived: when, from which network, the push's headers, and each notification's fields by kind and length. Add `--show` to print what they say.
 
+   The relay also records requests to any other address, without who sent them, in case Instagram calls somewhere unexpected. Most are the internet's scanners: `read` lists those from Meta's networks and counts the rest, and `--all` lists them too.
+
 ## Taking it down
 
 Delete the `unreeled-push-test` Worker and its D1 database of the same name, then `~/.config/unreeled/push-test/`. The website has no call that removes a push address; once the relay is gone, pushes to it are refused.
