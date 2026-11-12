@@ -11,8 +11,11 @@ const maxBody = 16 * 1024;
 export default {
 	async fetch(request): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname.startsWith("/push/") && (await same(url.pathname.slice(6), env.PUSH_ID))) {
-			return record(request, url);
+		// The push address, with an optional label after it that says which registration it's for:
+		// /push/<secret> or /push/<secret>/phone.
+		const push = url.pathname.match(/^\/push\/([^/]+)(?:\/([a-z0-9-]{1,24}))?$/);
+		if (push && (await same(push[1]!, env.PUSH_ID))) {
+			return record(request, url, push[2] ?? "");
 		}
 		if (url.pathname === "/log" && request.method === "GET") {
 			const token = request.headers.get("Authorization")?.replace(/^Bearer /, "") ?? "";
@@ -23,7 +26,7 @@ export default {
 } satisfies ExportedHandler;
 
 /** Keeps a request to the push address: when, from where, its headers and its body as sent. */
-async function record(request: Request, url: URL): Promise<Response> {
+async function record(request: Request, url: URL, label: string): Promise<Response> {
 	const body = new Uint8Array(await request.arrayBuffer());
 	const headers = Object.fromEntries(request.headers);
 	const sender = {
@@ -33,7 +36,7 @@ async function record(request: Request, url: URL): Promise<Response> {
 		country: request.cf?.country,
 	};
 	await table();
-	await env.DB.prepare("INSERT INTO pushes (received, method, headers, sender, bytes, body) VALUES (?, ?, ?, ?, ?, ?)")
+	await env.DB.prepare("INSERT INTO pushes (received, method, headers, sender, bytes, body, label) VALUES (?, ?, ?, ?, ?, ?, ?)")
 		.bind(
 			new Date().toISOString(),
 			request.method,
@@ -41,6 +44,7 @@ async function record(request: Request, url: URL): Promise<Response> {
 			JSON.stringify(sender),
 			body.length,
 			base64(body.subarray(0, maxBody)),
+			label,
 		)
 		.run();
 	if (request.method !== "POST") {
@@ -74,9 +78,13 @@ let tableReady: Promise<unknown> | undefined;
 
 /** Creates the table the first time, so the test needs no setup step besides deploying. */
 async function table() {
-	tableReady ??= env.DB.exec(
-		"CREATE TABLE IF NOT EXISTS pushes (id INTEGER PRIMARY KEY AUTOINCREMENT, received TEXT NOT NULL, method TEXT NOT NULL, headers TEXT NOT NULL, sender TEXT NOT NULL, bytes INTEGER NOT NULL, body TEXT NOT NULL)",
-	).catch((error: unknown) => {
+	tableReady ??= (async () => {
+		await env.DB.exec(
+			"CREATE TABLE IF NOT EXISTS pushes (id INTEGER PRIMARY KEY AUTOINCREMENT, received TEXT NOT NULL, method TEXT NOT NULL, headers TEXT NOT NULL, sender TEXT NOT NULL, bytes INTEGER NOT NULL, body TEXT NOT NULL, label TEXT NOT NULL DEFAULT '')",
+		);
+		// A table made before labels existed gets the column. On any other, this fails and is ignored.
+		await env.DB.exec("ALTER TABLE pushes ADD COLUMN label TEXT NOT NULL DEFAULT ''").catch(() => {});
+	})().catch((error: unknown) => {
 		tableReady = undefined;
 		throw error;
 	});

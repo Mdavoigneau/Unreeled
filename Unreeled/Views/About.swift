@@ -125,6 +125,10 @@ struct AboutView: View {
                 }
                 .overlay(alignment: .top) { Theme.hairline.frame(height: 0.5) }
                 .padding(.top, 32)
+                if let test = PushTest.bundled {
+                    PushTestRow(test: test)
+                        .padding(.top, 28)
+                }
                 Text(Self.queriesStatus)
                     .font(Theme.font(12))
                     .foregroundStyle(Theme.secondary)

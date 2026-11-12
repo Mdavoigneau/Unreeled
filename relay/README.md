@@ -30,6 +30,14 @@ Node 22.18 or later, and `npm install` in this folder once.
    ```
 
    This writes to the account: Instagram starts sending its notifications to the relay. `Library/Caches/network-log.jsonl` in the app's data folder says whether Instagram took the address.
+
+   On a phone, where there are no launch arguments, give the build the values instead:
+
+   ```bash
+   node tools/pushtest.mjs registration phone --json > ../Unreeled/PushTest.json
+   ```
+
+   A build with that file shows **Push Test** in About (the gear on your profile), with a button that registers. `phone` is a label: it goes at the end of the push address, and the log says which registration each push was for. Git ignores the file; delete it after building, so later builds don't carry it.
 5. **Read.** `node tools/pushtest.mjs read` lists what arrived: when, from which network, the push's headers, and each notification's fields by kind and length. Add `--show` to print what they say.
 
 ## Taking it down

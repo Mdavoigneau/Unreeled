@@ -4,10 +4,14 @@
 //
 //   node tools/pushtest.mjs keys                  make the keys and the relay's secrets, once
 //   node tools/pushtest.mjs relay <address>       remember where the relay is deployed
-//   node tools/pushtest.mjs registration          what to register: the push address, p256dh, auth
-//   node tools/pushtest.mjs selftest              send the relay a push made here, as Instagram would
+//   node tools/pushtest.mjs registration [label] [--json]
+//                                                 what to register: the push address, p256dh, auth
+//   node tools/pushtest.mjs selftest [label]      send the relay a push made here, as Instagram would
 //   node tools/pushtest.mjs read [--after <n>] [--show]
 //                                                 what the relay recorded, decrypted here
+//
+// A label (phone, simulator…) goes at the end of the push address, so the log says which
+// registration each push was for.
 
 import { createCipheriv, createDecipheriv, createECDH, createHmac, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,7 +25,7 @@ const secretsFile = join(folder, "relay-secrets.json");
 const [command, ...args] = process.argv.slice(2);
 const commands = { keys: makeKeys, relay: setRelay, registration, selftest: selfTest, read };
 if (!commands[command]) {
-	console.error("Usage: node tools/pushtest.mjs keys | relay <address> | registration | selftest | read [--after <n>] [--show]");
+	console.error("Usage: node tools/pushtest.mjs keys | relay <address> | registration [label] [--json] | selftest [label] | read [--after <n>] [--show]");
 	process.exit(2);
 }
 await commands[command]();
@@ -60,10 +64,21 @@ function setRelay() {
 	console.log(`The relay is at ${keys.relay}`);
 }
 
-/** The three values a registration takes, on one line. The address is a secret: don't post it. */
+/**
+ * The three values a registration takes: on one line for the Debug probe, or with `--json` as the
+ * PushTest.json a phone build carries. The address is a secret: don't post it.
+ */
 function registration() {
 	const keys = load();
-	console.log(`${pushAddress(keys)} ${keys.publicKey} ${keys.auth}`);
+	const values = { endpoint: pushAddress(keys, label()), p256dh: keys.publicKey, auth: keys.auth };
+	console.log(args.includes("--json") ? JSON.stringify(values) : `${values.endpoint} ${values.p256dh} ${values.auth}`);
+}
+
+/** The first argument that isn't an option. */
+function label() {
+	const name = args.find((arg) => !arg.startsWith("--"));
+	if (name !== undefined && !/^[a-z0-9-]{1,24}$/.test(name)) throw new Error("A label is up to 24 lowercase letters, digits or hyphens.");
+	return name;
 }
 
 function load() {
@@ -75,9 +90,9 @@ function save(keys) {
 	writeFileSync(keysFile, JSON.stringify(keys, null, "\t") + "\n", { mode: 0o600 });
 }
 
-function pushAddress(keys) {
+function pushAddress(keys, label) {
 	if (!keys.relay) throw new Error("No relay yet: run `node tools/pushtest.mjs relay <address>` after deploying.");
-	return `${keys.relay}/push/${keys.pushID}`;
+	return `${keys.relay}/push/${keys.pushID}${label ? `/${label}` : ""}`;
 }
 
 // MARK: Self-test
@@ -102,7 +117,7 @@ async function selfTest() {
 	// Two bytes of padding length (none here), then the message.
 	const plain = Buffer.concat([Buffer.alloc(2), Buffer.from(JSON.stringify(payload))]);
 	const body = Buffer.concat([cipher.update(plain), cipher.final(), cipher.getAuthTag()]);
-	const response = await fetch(pushAddress(keys), {
+	const response = await fetch(pushAddress(keys, label()), {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/octet-stream",
@@ -136,7 +151,8 @@ async function read() {
 	const rows = await response.json();
 	for (const row of rows) {
 		const { headers, sender } = row;
-		console.log(`#${row.id}  ${row.received}  ${row.method}  ${row.bytes} bytes  from AS${sender.asn ?? "?"} ${sender.network ?? "?"} (${sender.country ?? "?"})`);
+		const to = row.label ? `  to "${row.label}"` : "";
+		console.log(`#${row.id}  ${row.received}  ${row.method}${to}  ${row.bytes} bytes  from AS${sender.asn ?? "?"} ${sender.network ?? "?"} (${sender.country ?? "?"})`);
 		const notable = ["content-encoding", "content-type", "ttl", "urgency", "topic", "user-agent"]
 			.filter((name) => headers[name] != null)
 			.map((name) => `${name}: ${headers[name]}`);
