@@ -10,7 +10,7 @@ What each screen does, and how.
 | Activity (the heart tab): what people did with your posts and stories, and follow requests | Anything else, through "Open Website" |
 | A post with its comments. Profiles and their posts, account search, likes | |
 
-Reels from accounts you follow can be switched on in Profile › gear. They then show as single videos, with no swipe feed.
+Reels from accounts you follow can be switched on in Settings (the gear on your profile). They then show as single videos, with no swipe feed.
 
 ## Look
 
@@ -26,7 +26,7 @@ Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars i
 
 ## First launch
 
-Before anything else, a short notice says what Unreeled is and what using it means for your account. "I Understand" leads to Instagram's own login page. The notice is also under Profile › gear › About Unreeled, with the version and the project's links.
+Before anything else, a short notice says what Unreeled is and what using it means for your account. "I Understand" leads to Instagram's own login page. The notice is also in Settings, under About at the top right, with the version and the project's links.
 
 ## Speed
 

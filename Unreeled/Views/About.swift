@@ -62,44 +62,35 @@ struct WelcomeView: View {
     let accept: () -> Void
 
     var body: some View {
-        ScrollView {
+        AnswerPage {
             VStack(spacing: 0) {
                 Text("Unreeled")
-                    .font(Theme.wordmark)
+                    .font(.custom("SnellRoundhand-Bold", size: 40))
                     .foregroundStyle(Theme.ink)
-                    .padding(.top, 64)
                 Text("Your friends on Instagram, without the rabbit hole.")
                     .font(Theme.font(15))
                     .foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 6)
                 NoticePoints()
-                    .padding(.top, 40)
-                Button(action: accept) {
-                    Text("I Understand")
-                        .font(Theme.font(16, .medium))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 4))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 40)
-                HStack(spacing: 20) {
-                    Link("Privacy Policy", destination: Links.privacy)
-                    Link("Source Code", destination: Links.source)
-                }
-                .font(Theme.font(13))
-                .padding(.vertical, 20)
+                    .padding(.top, 44)
             }
-            .padding(.horizontal, 32)
-            .frame(maxWidth: 480)
-            .frame(maxWidth: .infinity)
+        } actions: {
+            Button(action: accept) {
+                Text("I Understand").filledButton()
+            }
+            .buttonStyle(.plain)
+            HStack(spacing: 24) {
+                Link("Privacy Policy", destination: Links.privacy)
+                Link("Source Code", destination: Links.source)
+            }
+            .font(Theme.font(13))
+            .frame(minHeight: 44)
         }
-        .background(Color.white)
     }
 }
 
-/// From the gear on your profile: the notice again, the version, and the project's links.
+/// From the top right of Settings: the notice again, the version, and the project's links.
 struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -125,10 +116,6 @@ struct AboutView: View {
                 }
                 .overlay(alignment: .top) { Theme.hairline.frame(height: 0.5) }
                 .padding(.top, 32)
-                if let test = PushTest.bundled {
-                    PushTestRow(test: test)
-                        .padding(.top, 28)
-                }
                 Text(Self.queriesStatus)
                     .font(Theme.font(12))
                     .foregroundStyle(Theme.secondary)

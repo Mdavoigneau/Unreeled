@@ -10,9 +10,7 @@ struct ProfileView: View {
 
     @Environment(Session.self) private var session
     @Environment(StoriesModel.self) private var stories
-    @AppStorage("showsReels") private var showsReels = false
     @State private var model = ProfileModel()
-    @State private var showsAbout = false
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 1), count: 3)
 
@@ -60,19 +58,14 @@ struct ProfileView: View {
             Text(model.profile?.username ?? username ?? "").font(Theme.font(16, .medium))
         } trailing: {
             if isOwn {
-                Menu {
-                    Toggle("Show Reels from Accounts You Follow", isOn: $showsReels)
-                    Button("About Unreeled", systemImage: "info.circle") { showsAbout = true }
-                    Button("Log Out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                        Task { await session.logOut() }
-                    }
-                } label: {
+                NavigationLink(value: Route.settings) {
                     Image(systemName: "gearshape")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Options")
+                .accessibilityLabel("Settings")
             }
         }
-        .sheet(isPresented: $showsAbout) { AboutView() }
     }
 
     private func load() async {
@@ -271,7 +264,7 @@ final class ProfileModel {
     }
 }
 
-/// Your own profile, with settings and logging out.
+/// Your own profile, with the gear that opens Settings.
 struct OwnProfileView: View {
     @Environment(Session.self) private var session
 

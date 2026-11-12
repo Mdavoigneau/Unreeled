@@ -37,7 +37,9 @@ Node 22.18 or later, and `npm install` in this folder once.
    node tools/pushtest.mjs registration phone --json > ../Unreeled/PushTest.json
    ```
 
-   A build with that file shows **Push Test** in About (the gear on your profile), with a button that registers. `phone` is a label: it goes at the end of the push address, and the log says which registration each push was for. Git ignores the file; delete it after building, so later builds don't carry it.
+   A build with that file asks, before its first screen, whether to turn the push test on. Saying yes brings up iOS's own question about notifications, then registers. Afterwards the test is in Settings (the gear on your profile), under Notifications. `phone` is a label: it goes at the end of the push address, and the log says which registration each push was for. Git ignores the file; delete it after building, so later builds don't carry it.
+
+   Nothing shows on the phone yet: the relay only records. To try these screens without registering anything, launch a Debug build with `-pushTestDryRun YES`.
 5. **Read.** `node tools/pushtest.mjs read` lists what arrived: when, from which network, the push's headers, and each notification's fields by kind and length. Add `--show` to print what they say.
 
 ## Taking it down
