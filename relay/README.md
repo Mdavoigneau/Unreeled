@@ -13,7 +13,9 @@ The Worker here is a stand-in for that relay. It records what arrives at one sec
 ## What it has shown
 
 - **A relay address doesn't work** (2026-11-12). Instagram accepted two registrations of the relay's address and then sent it nothing in four hours, at any path. Over the same messages, a Chromium browser that had turned on Instagram's notifications itself got each one within a minute or two.
-- **Still open:** whether an address made by a real browser, at Google's, Apple's or Mozilla's push service, gets pushes once it's registered from the app's login. That's the browser test below.
+- **An address at Google's push service works** (2026-11-12). Made by a Chromium browser on the browser test page below and registered from the app's login, it got each direct message about a second after it was sent: type `direct_v2_text`, with the text, the conversation and some thirty other fields.
+- **An address at Apple's push service doesn't.** Safari's, registered the same way, got none of the same messages, and the Mac's push service logged nothing arriving. Either Instagram doesn't send there or Apple refuses what it sends.
+- **Still open:** Mozilla's push service, and how long pushes keep coming to an address registered this way.
 
 ## Running it
 
