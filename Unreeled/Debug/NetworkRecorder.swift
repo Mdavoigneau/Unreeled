@@ -109,6 +109,8 @@ final class NetworkRecorder: NSObject, WKScriptMessageHandler {
 ///
 /// - `GQL <QueryName> {"variables":…}` runs a query from Queries.json (providers are added).
 /// - `GET /api/v1/…` calls a REST endpoint; a POST takes its form after the path: `POST /api/v1/… a=1&b=2`.
+/// - `PUSH <address> <p256dh> <auth>` registers a web push address for this login. It writes to
+///   the account: Instagram starts sending its notifications there.
 enum DebugProbe {
     @MainActor
     static func runIfRequested(api: InstagramAPI) async {
@@ -116,6 +118,20 @@ enum DebugProbe {
         for probe in spec.components(separatedBy: " | ") {
             let parts = probe.split(separator: " ", maxSplits: 2).map(String.init)
             guard parts.count >= 2 else { continue }
+            if parts[0] == "PUSH" {
+                let keys = parts.count == 3 ? parts[2].split(separator: " ").map(String.init) : []
+                // The address ends in a secret: only its host is logged.
+                var entry: [String: Any] = ["probe": true, "pushRegistration": URL(string: parts[1])?.host() ?? "?", "time": Date().ISO8601Format()]
+                do {
+                    guard keys.count == 2 else { throw InstagramAPI.Failure.unreadable("PUSH takes an address and two keys") }
+                    try await api.registerWebPush(endpoint: parts[1], p256dh: keys[0], auth: keys[1])
+                    entry["status"] = "ok"
+                } catch {
+                    entry["error"] = error.localizedDescription
+                }
+                NetworkRecorder.append(entry)
+                continue
+            }
             if parts[0] == "GQL" {
                 let json = parts.count == 3 ? parts[2] : "{}"
                 let variables = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]

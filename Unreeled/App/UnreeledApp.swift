@@ -21,10 +21,11 @@ struct UnreeledApp: App {
 }
 
 /// The notice the first time, then Instagram's login page until you're logged in, then the
-/// native app.
+/// native app. A build made for the push test asks about it once, before the app.
 struct RootView: View {
     @Environment(Session.self) private var session
     @AppStorage(Notice.key) private var acceptedNotice = 0
+    @AppStorage(PushTest.askedKey) private var askedPushTest = false
     @State private var stories = StoriesModel()
     @State private var inbox = InboxModel()
 
@@ -84,22 +85,31 @@ struct RootView: View {
             case .loggedOut:
                 LoginView()
             case .loggedIn:
-                #if DEBUG
-                if let path = UserDefaults.standard.string(forKey: "web") {
-                    // Debug builds: -web <path> shows that instagram.com page instead,
-                    // e.g. to record the API calls it makes.
-                    WebScreen(path: path)
-                } else if let code = UserDefaults.standard.string(forKey: "post") {
-                    // -post <code> opens that post natively.
-                    NavigationStack { PostLoaderView(code: code).routes() }
+                if let test = PushTest.bundled, !askedPushTest {
+                    PushTestOffer(test: test)
                 } else {
-                    MainView()
+                    home
                 }
-                #else
-                MainView()
-                #endif
             }
         }
+    }
+
+    @ViewBuilder
+    private var home: some View {
+        #if DEBUG
+        if let path = UserDefaults.standard.string(forKey: "web") {
+            // Debug builds: -web <path> shows that instagram.com page instead,
+            // e.g. to record the API calls it makes.
+            WebScreen(path: path)
+        } else if let code = UserDefaults.standard.string(forKey: "post") {
+            // -post <code> opens that post natively.
+            NavigationStack { PostLoaderView(code: code).routes() }
+        } else {
+            MainView()
+        }
+        #else
+        MainView()
+        #endif
     }
 }
 
@@ -201,6 +211,7 @@ enum Route: Hashable {
     case inbox
     case thread(DirectThread)
     case followRequests([User])
+    case settings
     case web(path: String, title: String)
 
     static func profile(_ user: User) -> Route {
@@ -235,6 +246,7 @@ extension View {
                 ConversationView(thread: thread)
                 #endif
             case .followRequests(let users): FollowRequestsView(requests: users)
+            case .settings: SettingsView()
             case .web(let path, let title): WebPageScreen(path: path, title: title)
             }
         }

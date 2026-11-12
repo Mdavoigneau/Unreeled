@@ -593,8 +593,22 @@ final class InstagramAPI: NSObject {
 
     /// The website's device ID cookie, which the feed query sends along.
     func deviceID() async -> String {
+        await cookie("ig_did")
+    }
+
+    /// The website's machine ID cookie, which a push registration sends along.
+    func machineID() async -> String {
+        await cookie("mid")
+    }
+
+    /// The checksum of the CSRF token that the website adds to the forms it posts, as `jazoest`.
+    func formChecksum() async -> String {
+        "2" + String(await cookie("csrftoken").utf16.reduce(0) { $0 + Int($1) })
+    }
+
+    private func cookie(_ name: String) async -> String {
         let cookies = await dataStore.httpCookieStore.allCookies()
-        return cookies.first { $0.name == "ig_did" && $0.domain.hasSuffix("instagram.com") }?.value ?? ""
+        return cookies.first { $0.name == name && $0.domain.hasSuffix("instagram.com") }?.value ?? ""
     }
 
     func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {

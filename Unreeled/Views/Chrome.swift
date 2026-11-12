@@ -57,6 +57,46 @@ extension View {
     }
 }
 
+/// A page that says one thing and waits for an answer: what it says sits in the middle of the
+/// space above, and its buttons at the bottom. It scrolls when the text is taller than the screen.
+struct AnswerPage<Content: View, Actions: View>: View {
+    @ViewBuilder let content: Content
+    @ViewBuilder let actions: Actions
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: 480)
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) { actions }
+                .padding(.horizontal, 32)
+                .padding(.vertical, 12)
+                .frame(maxWidth: 480)
+                .frame(maxWidth: .infinity)
+                .background(Color.white)
+        }
+        .background(Color.white)
+    }
+}
+
+extension View {
+    /// The look of a page's main button: filled, as wide as the page.
+    func filledButton() -> some View {
+        font(Theme.font(16, .medium))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 4))
+            .contentShape(Rectangle())
+    }
+}
+
 enum AppTab: CaseIterable, Hashable {
     case home, search, activity, profile
 

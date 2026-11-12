@@ -17,7 +17,7 @@ Unreeled is a free, open-source iPhone app for Instagram that shows the people y
 - **Instant:** what you do shows at once and goes to Instagram in the background, with a "✓ Delivered" once it's there. Screens open on what the app saved last time.
 - **A 2016 look:** flat white bars, Helvetica Neue and one steel-blue accent.
 
-Reels from accounts you follow can be switched on in Profile › gear. They then show one at a time, with no feed to swipe.
+Reels from accounts you follow can be switched on in Settings (the gear on your profile). They then show one at a time, with no feed to swipe.
 
 The details, screen by screen: [docs/FEATURES.md](docs/FEATURES.md).
 
