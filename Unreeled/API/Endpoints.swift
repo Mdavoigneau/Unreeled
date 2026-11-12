@@ -643,6 +643,26 @@ extension InstagramAPI {
             throw Failure.query("Instagram didn't \(liked ? "like" : "unlike") the post.")
         }
     }
+
+    // MARK: Push
+
+    /// Registers a web push address for this login, as the website does once a browser allows
+    /// notifications (`registerPushClient`). Instagram then posts each notification to
+    /// `endpoint`, encrypted for the two keys, which are base64url as a browser gives them.
+    func registerWebPush(endpoint: String, p256dh: String, auth: String) async throws {
+        let data = try await send("POST", "/api/v1/web/push/register/", form: [
+            "device_token": endpoint,
+            "device_type": "web_vapid",
+            "mid": await machineID(),
+            // The keys as a browser's subscription lists them.
+            "subscription_keys": #"{"p256dh":"\#(p256dh)","auth":"\#(auth)"}"#,
+            "jazoest": await formChecksum(),
+        ])
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        guard json?["status"] as? String == "ok" else {
+            throw Failure.query("Instagram didn't take the push address.")
+        }
+    }
 }
 
 private extension Optional where Wrapped == String {
