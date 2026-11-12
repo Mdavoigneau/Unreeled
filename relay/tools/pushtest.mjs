@@ -6,6 +6,9 @@
 //   node tools/pushtest.mjs relay <address>       remember where the relay is deployed
 //   node tools/pushtest.mjs registration [label] [--json]
 //                                                 what to register: the push address, p256dh, auth
+//   node tools/pushtest.mjs registration --reported <browser>
+//                                                 the same for the address a browser made on the
+//                                                 relay's /browser-test page (safari, chromium…)
 //   node tools/pushtest.mjs selftest [label]      send the relay a push made here, as Instagram would
 //   node tools/pushtest.mjs read [--after <n>] [--show] [--all]
 //                                                 what the relay recorded, decrypted here
@@ -70,15 +73,25 @@ function setRelay() {
  * The three values a registration takes: on one line for the Debug probe, or with `--json` as the
  * PushTest.json a phone build carries. The address is a secret: don't post it.
  */
-function registration() {
+async function registration() {
 	const keys = load();
+	const browser = option("--reported");
+	if (browser) {
+		// The newest address that browser reported. Its keys are the browser's own, so only the
+		// browser can read what arrives there.
+		const reports = (await recorded(keys, 0)).filter((row) => row.path === `/report/subscription/${browser}`);
+		if (!reports.length) throw new Error(`No address reported by ${browser} yet.`);
+		const { endpoint, keys: browserKeys } = report(reports.at(-1));
+		console.log(`${endpoint} ${browserKeys.p256dh} ${browserKeys.auth}`);
+		return;
+	}
 	const values = { endpoint: pushAddress(keys, label()), p256dh: keys.publicKey, auth: keys.auth };
 	console.log(args.includes("--json") ? JSON.stringify(values) : `${values.endpoint} ${values.p256dh} ${values.auth}`);
 }
 
-/** The first argument that isn't an option. */
+/** The first argument that isn't an option or an option's value. */
 function label() {
-	const name = args.find((arg) => !arg.startsWith("--"));
+	const name = args.find((arg, index) => !arg.startsWith("--") && !["--after", "--reported"].includes(args[index - 1]));
 	if (name !== undefined && !/^[a-z0-9-]{1,24}$/.test(name)) throw new Error("A label is up to 24 lowercase letters, digits or hyphens.");
 	return name;
 }
@@ -148,15 +161,21 @@ async function read() {
 	const keys = load();
 	const after = option("--after") ?? "0";
 	const show = args.includes("--show");
-	if (!keys.relay) throw new Error("No relay yet: run `node tools/pushtest.mjs relay <address>` after deploying.");
-	const response = await fetch(`${keys.relay}/log?after=${encodeURIComponent(after)}`, {
-		headers: { Authorization: `Bearer ${keys.readToken}` },
-	});
-	if (!response.ok) throw new Error(`The relay answered ${response.status}`);
-	const rows = await response.json();
+	const rows = await recorded(keys, after);
 	let others = 0;
 	for (const row of rows) {
 		const { headers, sender } = row;
+		if (row.path.startsWith("/report/")) {
+			// From the browser test page or its service worker.
+			const [kind, browser] = row.path.split("/").slice(2);
+			const content = report(row);
+			if (kind === "subscription") {
+				console.log(`#${row.id}  ${row.received}  ${browser} made a push address at ${new URL(content.endpoint).host}  (encodings: ${content.encodings?.join(", ") ?? "?"})`);
+			} else {
+				console.log(`#${row.id}  ${row.received}  A PUSH ARRIVED in ${browser}: ${JSON.stringify(content.shape ?? { hasContent: content.hasContent, textLength: content.textLength })}`);
+			}
+			continue;
+		}
 		if (row.path) {
 			// Not the push address.
 			if (!args.includes("--all") && !metaNetworks.has(sender.asn)) {
@@ -197,6 +216,21 @@ async function read() {
 function option(name) {
 	const index = args.indexOf(name);
 	return index >= 0 ? args[index + 1] : undefined;
+}
+
+/** What the relay recorded after entry `after`. */
+async function recorded(keys, after) {
+	if (!keys.relay) throw new Error("No relay yet: run `node tools/pushtest.mjs relay <address>` after deploying.");
+	const response = await fetch(`${keys.relay}/log?after=${encodeURIComponent(after)}`, {
+		headers: { Authorization: `Bearer ${keys.readToken}` },
+	});
+	if (!response.ok) throw new Error(`The relay answered ${response.status}`);
+	return response.json();
+}
+
+/** What the browser test page or its service worker sent. */
+function report(row) {
+	return JSON.parse(Buffer.from(row.body, "base64").toString("utf8"));
 }
 
 /** Who signed the push (RFC 8292): the audience, contact and expiry in its token. */

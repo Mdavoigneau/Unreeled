@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unreeled push test</title>
+<style>
+  body { font: 16px/1.5 -apple-system, "Helvetica Neue", sans-serif; color: #262626; max-width: 34em; margin: 3em auto; padding: 0 1.2em; }
+  h1 { font-size: 1.4em; }
+  button { font: inherit; padding: 0.6em 1.2em; border: 0; border-radius: 4px; background: #3f729b; color: #fff; }
+  #out { white-space: pre-wrap; color: #8e8e8e; margin-top: 1.2em; }
+</style>
+</head>
+<body>
+<h1>Unreeled push test</h1>
+<p>This asks your browser for a push address that only Instagram can send to, and tells the test's relay what it is. The page sends nothing to Instagram.</p>
+<p><button id="subscribe">Subscribe this browser</button></p>
+<div id="out"></div>
+<script>
+// Instagram's public key for web push: a push address made with it accepts pushes signed by
+// Instagram and nobody else.
+const instagramKey = "BIBn3E_rWTci8Xn6P9Xj3btShT85Wdtne0LtwNUyRQ5XjFNkuTq9j4MPAVLvAFhXrUU1A9UxyxBA7YIOjqDIDHI";
+const out = document.getElementById("out");
+const say = (line) => { out.textContent += line + "\n"; };
+
+function bytes(base64url) {
+  const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
+  return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+}
+
+function browserName() {
+  const agent = navigator.userAgent;
+  if (/Firefox\//.test(agent)) return "firefox";
+  if (/Edg\//.test(agent)) return "edge";
+  if (/Chrome\//.test(agent)) return "chromium";
+  if (/Safari\//.test(agent)) return "safari";
+  return "other";
+}
+
+document.getElementById("subscribe").onclick = async () => {
+  out.textContent = "";
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) throw new Error("this browser has no web push.");
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") throw new Error(`notifications weren't allowed (${permission}).`);
+    const registration = await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.ready;
+    const subscription = (await registration.pushManager.getSubscription())
+      ?? (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes(instagramKey) }));
+    const { endpoint, keys } = subscription.toJSON();
+    const browser = browserName();
+    say(`Subscribed. This browser's push service is ${new URL(endpoint).host}.`);
+    const response = await fetch(`/report/subscription/${browser}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ browser, endpoint, keys, encodings: PushManager.supportedContentEncodings ?? null }),
+    });
+    say(response.ok ? "The relay has the address. You can close this page." : `The relay didn't take it (${response.status}).`);
+  } catch (error) {
+    say(`It didn't work: ${error.message}`);
+  }
+};
+</script>
+</body>
+</html>

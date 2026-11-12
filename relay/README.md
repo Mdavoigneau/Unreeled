@@ -10,6 +10,11 @@ The Worker here is a stand-in for that relay. It records what arrives at one sec
 - What's in one: which kinds of notification, and which fields?
 - Do they keep coming? The Matrix bridge for Instagram reports that web push sometimes stops ([mautrix/meta#454](https://github.com/mautrix/meta/pull/454)).
 
+## What it has shown
+
+- **A relay address doesn't work** (2026-11-12). Instagram accepted two registrations of the relay's address and then sent it nothing in four hours, at any path. Over the same messages, a Chromium browser that had turned on Instagram's notifications itself got each one within a minute or two.
+- **Still open:** whether an address made by a real browser, at Google's, Apple's or Mozilla's push service, gets pushes once it's registered from the app's login. That's the browser test below.
+
 ## Running it
 
 Node 22.18 or later, and `npm install` in this folder once.
@@ -43,6 +48,16 @@ Node 22.18 or later, and `npm install` in this folder once.
 5. **Read.** `node tools/pushtest.mjs read` lists what arrived: when, from which network, the push's headers, and each notification's fields by kind and length. Add `--show` to print what they say.
 
    The relay also records requests to any other address, without who sent them, in case Instagram calls somewhere unexpected. Most are the internet's scanners: `read` lists those from Meta's networks and counts the rest, and `--all` lists them too.
+
+## The browser test
+
+`/browser-test` on the relay is a page where a real browser makes a push address with Instagram's public key, so only Instagram can send to it, and reports it to the relay. Open it in each browser to try, choose **Subscribe this browser** and allow notifications. Then register that address from a Debug build:
+
+```bash
+xcrun simctl launch booted <bundle ID> -probe "PUSH $(node tools/pushtest.mjs registration --reported safari)"
+```
+
+(`chromium`, `firefox` or `edge` for the others.) When a push arrives, the page's service worker shows it and tells the relay, with the names and kinds of its fields only. `read` lists both the addresses and the arrivals.
 
 ## Taking it down
 

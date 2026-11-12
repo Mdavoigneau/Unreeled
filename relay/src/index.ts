@@ -1,4 +1,6 @@
 import { env } from "cloudflare:workers";
+import browserTestPage from "./browser-test.html?raw";
+import browserTestWorker from "./browser-test-sw.js?raw";
 
 // A stand-in for the push relay, for testing what Instagram sends to a web push address (see
 // README.md). It records each request to the push address and answers as a push service does.
@@ -7,6 +9,10 @@ import { env } from "cloudflare:workers";
 //
 // Requests to any other address are recorded too, without who sent them: if Instagram calls
 // somewhere unexpected, the log should show it.
+//
+// /browser-test is a page where a real browser makes a push address with Instagram's key, to
+// see which push services Instagram sends to. The page and its service worker report to
+// /report/…: the address, and later that a push arrived.
 
 /** A web push message is at most about 4 KB. Anything much larger is cut. */
 const maxBody = 16 * 1024;
@@ -35,7 +41,16 @@ export default {
 				},
 			});
 		}
+		if (request.method === "GET" && url.pathname === "/browser-test") {
+			return new Response(browserTestPage, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+		}
+		if (request.method === "GET" && url.pathname === "/sw.js") {
+			return new Response(browserTestWorker, { headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" } });
+		}
 		await record(request, { path: url.pathname.slice(0, 200) + (url.search ? "?…" : "") });
+		if (request.method === "POST" && url.pathname.startsWith("/report/")) {
+			return new Response(null, { status: 204 });
+		}
 		return new Response("Not found\n", { status: 404 });
 	},
 } satisfies ExportedHandler;
