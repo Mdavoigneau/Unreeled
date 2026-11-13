@@ -1,8 +1,8 @@
 # Privacy Policy
 
-*Effective 9 November 2026*
+*Effective 13 November 2026*
 
-Unreeled is a free, open-source app for using Instagram without Reels, suggestions or ads. It isn't made or endorsed by Instagram or Meta. This policy explains what happens to your information when you use it. The short version: **Unreeled collects nothing about you.** Your account goes only between your phone and Instagram.
+Unreeled is a free, open-source app for using Instagram without Reels, suggestions or ads. It isn't made or endorsed by Instagram or Meta. This policy explains what happens to your information when you use it. The short version: **Unreeled collects nothing about you.** Your account goes only between your phone and Instagram. One thing is different if you turn it on: notifications pass through a relay, encrypted so that only your phone can read them.
 
 ## What stays between your phone and Instagram
 
@@ -14,9 +14,22 @@ Unreeled is a free, open-source app for using Instagram without Reels, suggestio
 
 What you do on Instagram through Unreeled is subject to [Instagram's own privacy policy](https://privacycenter.instagram.com/policy), as it would be on the website.
 
+## Notifications, if you turn them on
+
+Notifications are off unless you turn them on, and only some builds of Unreeled offer them. The app says what follows before you do.
+
+- **Keys.** Your phone makes a pair of keys and a secret, and keeps them in its Keychain, on this device only.
+- **Instagram.** Your phone gives Instagram a push address and the public key, from your own login, as a browser does when you allow notifications on instagram.com. Instagram then encrypts each notification for your phone and sends it to that address.
+- **On the way.** The address belongs to Mozilla's push service, which hands the encrypted notification to Unreeled's relay, which passes it to Apple's push service, which delivers it to your phone. None of the three can read it. Your phone decrypts it and shows it, and downloads the sender's picture from Instagram. The relay runs on Cloudflare.
+- **What the relay keeps.** A random ID for your phone, your phone's address at Apple's push service, and the push address. It sees when a notification passes and how large it is. It never has the keys, your login, or anything that says which Instagram account the notifications are for, and it logs nothing from a notification.
+- **When the app contacts the relay.** When you turn notifications on or off, and at most once a day when you open the app, to keep the address current. Like any web request, this reaches the relay with your IP address; we don't log these requests or use them to identify anyone.
+- **Turning them off,** or logging out, deletes the keys from your phone and the relay's record of it. If you delete the app instead, the relay drops the record the first time Apple reports the app gone.
+
+Mozilla, Apple and Cloudflare handle the encrypted notifications under their own privacy policies. If you built Unreeled yourself, the relay is the one your build was made with, run by whoever runs it.
+
 ## What we collect
 
-Nothing. Unreeled has no accounts of its own, no analytics, no crash reporting, no advertising and no tracking, and it contains no third-party code.
+Nothing, unless you turn notifications on; then only what the relay keeps, listed above. Unreeled has no accounts of its own, no analytics, no crash reporting, no advertising and no tracking, and the app contains no third-party code.
 
 ## The query list
 

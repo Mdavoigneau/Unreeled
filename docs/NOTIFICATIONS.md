@@ -1,184 +1,207 @@
-# Unreeled push notifications — design & runbook
+# Notifications
 
-**Status (2026-11-12): receiving side validated end-to-end. The sending side (APNs) is pending the Apple Developer Program.**
+How Unreeled shows Instagram's notifications (messages, likes, follows) on the iPhone while the app is closed, without Instagram's app.
 
-A central, **opt-in**, **end-to-end-encrypted** service that gives Unreeled instant notifications (DMs, likes, follows, …) on the iPhone while the app is closed — without Instagram's app and without its addictive surface. The receiver uses **Mozilla's open push service**, which turned out to be far simpler and more maintainable than Google's FCM.
+**Where it stands (13 November 2026).** The relay, the app's side and the notification extension are built. Everything up to Apple's push service is tested: a sender's push travels through Mozilla's real push service and the relay, and comes out decrypted on the phone's side. The relay exists as a Node program and as a Cloudflare Worker; the Worker is deployed at `relay.unreeled.app` as a dry run, without Apple's key. What's left needs the Apple Developer Program: the relay's push key, and with it the first run on an iPhone. See [What's left](#whats-left).
 
-> See [Legitimate use & scope](#legitimate-use--scope) for why this is built the way it is.
-
----
+It's off unless you turn it on, and a build only offers it when it was made with a relay (see [Building with notifications](#building-with-notifications)).
 
 ## Principles
 
-1. **Opt-in only**, after an explicit risk disclosure.
-2. **End-to-end encrypted** — the central service forwards ciphertext only; the decryption key never leaves the user's phone.
-3. **Instagram-facing actions stay on the user's own device** — each user's own login registers the push address, so the service never talks to Instagram (only to Mozilla).
-4. **Cheap & maintainable** — one small box serves many users; the receiver is a documented WebSocket protocol, not reverse-engineering.
+1. **You turn it on.** The app asks once, says what it means, and does nothing without a yes.
+2. **End to end.** Instagram encrypts each notification for keys that never leave the phone. The relay passes on ciphertext it can't read.
+3. **Your login stays on your phone.** The phone itself gives Instagram the push address, as a browser would. The relay never talks to Instagram and holds nothing of your account.
+4. **Small.** One small machine serves many phones. The receiving side is a documented protocol with one dependency.
 
----
-
-## What's proven (2026-11-12)
-
-- Instagram delivers web push only to a real browser push service. **Google FCM** works; **Apple's** doesn't; a plain relay address doesn't.
-- A **headless server browser** can receive Instagram's push end-to-end (Gates 1/1.5/2) — but a browser *decrypts*, so it can't be a private central service.
-- **Mozilla's push service is the answer (the chosen receiver):**
-  - **Stage A ✓** — a non-browser Node client (`ws` dependency only, ~150 lines) registers a VAPID-restricted channel on `wss://push.services.mozilla.com` and receives a push (self-test).
-  - **Stage B ✓** — **Instagram delivers real pushes to a Mozilla endpoint.** Registered from the account, the client received **4 real Instagram notifications over an hour** — all `aesgcm`, every header carrying Instagram's VAPID key (`p256ecdsa=BIBn3E_…`). Reconnect held across 2 socket drops.
-  - **Crypto ✓** — the legacy `aesgcm` decryption was validated in Node against `web-push`'s output (exact match), using the same algorithm as the on-phone extension ([`WebPushCrypto.swift`](../Unreeled/Notifications/WebPushCrypto.swift)).
-
-**Why Mozilla over FCM:** FCM would need a reverse-engineered client (its registration endpoint was even removed in 2024) and outbound ports 5228-5230. Mozilla is an **open, documented WebSocket protocol**, needs only outbound **443**, and has a maintained reference client ([Bitwarden's `autopush-manager`](https://github.com/bitwarden/autopush-manager)). The FCM port is **no longer needed**; it remains only a theoretical fallback.
-
----
-
-## Architecture
+## How it works
 
 ```
-  ┌───────────┐  encrypts to the PHONE's keys,   ┌──────────────────────────────┐
-  │ Instagram │  POSTs to the Mozilla endpoint    │ Mozilla push (autopush, wss) │
-  │ (web push)│ ───────────────────────────────▶ │                              │
-  └───────────┘                                   └───────────────┬──────────────┘
-        ▲                                                         │ delivers ciphertext
-        │ registerWebPush({endpoint, p256dh, auth})               ▼  over the WebSocket
-        │ (from the user's OWN login, on the phone)      ┌────────────────────────┐
-        │                                                │ Central service (Node, │
-  ┌─────┴───────────────┐    pair: {APNs token}          │  on Oracle)            │
-  │  iPhone (Unreeled)  │ ─────────────────────────────▶ │ • Mozilla client/user  │
-  │  • P-256 key (Kchn) │ ◀───────────────────────────── │ • endpoint→APNs map     │
-  │  • NSE decrypts     │   {Mozilla endpoint for device} │ • forwards ciphertext   │
-  └─────────────────────┘                                └───────────┬────────────┘
-        ▲   shows notification                                       │ APNs (HTTP/2, .p8)
-        └────────────────────────────────────────────────────────────┘  ciphertext in payload
+  Instagram ──► Mozilla's push service ──► relay ──► Apple's push service ──► iPhone
+  encrypts for    holds a push address      passes on    delivers             decrypts,
+  the phone       for each phone            ciphertext                        shows it
 ```
 
-**The split that keeps it private:**
+Instagram's website can notify a browser through web push: the browser gets a push address from its maker's push service, gives it to Instagram with a public key, and Instagram sends each notification there, encrypted for that key. Unreeled does the same with the parts split in two:
 
-| Piece | Owner | Purpose |
-|------|-------|---------|
-| **Mozilla endpoint** (the push URL + its channel) | **Central service** | Holds the WebSocket and receives the bytes |
-| **ECDH keypair + `auth`** (`p256dh`/`auth`) | **The phone** (Keychain) | The only thing that can decrypt the content |
+| Part | Who has it | What for |
+|------|-----------|----------|
+| The push address (at Mozilla's push service) | The relay | Receiving the bytes |
+| The key pair and the `auth` secret | The phone, in its Keychain | Reading them |
 
-Instagram encrypts to the phone's keys and POSTs to the service's Mozilla endpoint, so the service receives ciphertext it cannot read and relays it. Only the phone decrypts.
+So what the relay receives is ciphertext, and what it sends on through Apple is the same ciphertext. Only the phone can decrypt it.
 
----
+Turning notifications on, step by step:
 
-## Components
+1. iOS asks whether Unreeled may show notifications.
+2. The phone gets its address at Apple's push service (a device token).
+3. It pairs with the relay: `POST /pair` with the token. The relay opens a channel at Mozilla and answers with that channel's push address.
+4. The phone makes its keys: a P-256 key pair and a 16-byte `auth` secret, kept in the Keychain.
+5. The phone registers the push address, the public key and `auth` with Instagram from your own login: the website's own `/api/v1/web/push/register/` call.
 
-### 1. iPhone (the Unreeled app)
-- On first opt-in: generate a **P-256 keypair** + random **16-byte `auth`**; private key stays in the **Keychain**.
-- Obtain an **APNs device token** (needs the Apple Developer Program).
-- **Pair** with the service: send `{apnsToken}`; receive `{endpoint}` (the Mozilla address for this device).
-- **Register with Instagram from the user's own login**: `registerWebPush(endpoint, p256dh, auth)`.
-- A **Notification Service Extension** decrypts the forwarded `aesgcm` ciphertext ([`WebPushCrypto.swift`](../Unreeled/Notifications/WebPushCrypto.swift)) and shows it.
-- On **logout / opt-out**: tell the service to drop the device (Instagram has no unregister call, so the endpoint just goes stale).
+From then on, each notification goes Instagram → Mozilla → relay → Apple → phone, where the notification extension decrypts it and shows what it says.
 
-### 2. Central service (Node, on the Oracle box)
-- One **Mozilla autopush client per user** (a WebSocket; see the protocol below). Holds the connection, receives, acks.
-- Maps **Mozilla endpoint → APNs device token**.
-- On a push: forward the raw web-push fields (`data` ciphertext + `headers`) to the phone via APNs. **No decryption.**
-- Stores only **transport identifiers** (the per-user autopush identity + APNs token). No ECDH private keys, no `auth`, no plaintext.
-- **Staleness watch:** Instagram can silently stop delivering (mautrix/meta#454) — detect gaps and have the app re-assert on open.
-- Reference implementation: Bitwarden's `autopush-manager` (GPL-3.0). We ship our **own** small client (no GPL, and it forwards raw ciphertext instead of decrypting).
+Turning them off, or logging out, deletes the keys and tells the relay to forget the phone, which closes the push address. Instagram has no call to take an address back; it stops sending once the address stops answering.
 
-### 3. APNs forwarder
-- Token auth (`.p8` key + team/key IDs), HTTP/2 to APNs (`apns2` or native `http2`). In the central model the **project** holds one Apple key, so users need no Apple account.
-- Payload: `mutable-content: 1` + the ciphertext/headers in a custom field for the NSE, plus a minimal fallback alert.
+## What's proven
 
----
+**12 November 2026**, with a real account:
 
-## The receiver protocol (Mozilla autopush) — and how to keep it running
+- Instagram sends web push only to a real push service. A plain address of our own got nothing, Apple's web push got nothing, Google's and Mozilla's work.
+- A program that isn't a browser can hold a push address at Mozilla's service and receive on it. Instagram delivered four real notifications to such an address over an hour, all in the `aesgcm` encoding, across two dropped connections.
+- A registration made from Unreeled's login is honoured like a browser's.
 
-Connect to `wss://push.services.mozilla.com` and speak JSON:
+**13 November 2026**, with no account involved (a stand-in sender, [relay/tools/sample-push.mjs](../relay/tools/sample-push.mjs)):
+
+- The whole path after Instagram: a push encrypted by the `web-push` library went through Mozilla's real service to the relay, which forwarded it unread; delivered to the simulator, it was decrypted with the keys in the Keychain and shown.
+- The phone's decryption ([WebPushCrypto.swift](../Shared/WebPushCrypto.swift)) agrees with `web-push` in both encodings, `aesgcm` and `aes128gcm`.
+- Tapping a notification opens its conversation, or Activity for a like; one for the conversation on screen doesn't show on top of it; switching off unpairs and deletes the keys.
+
+- The relay as a Cloudflare Worker, in Cloudflare's runtime on a Mac: it holds the connection to Mozilla's real service from a Durable Object, pairs, and forwards a push that the app's decryptor then reads. Its tests cover what the Node relay's do, and coming back after a restart with only its alarm to wake it.
+
+- The Worker deployed on Cloudflare, as a dry run: from there it holds its connection to Mozilla's service, pairs and unpairs a phone, and reaches Apple's push service, which answers it (`MissingProviderToken`, as it should without a key).
+
+**Not yet run:** a push through Apple's real service, and therefore the notification extension as its own process on an iPhone. Nor is it known yet how the deployed Worker's connection to Mozilla holds over days. The simulator can't stand in for that: `xcrun simctl push` puts a notification straight into Notification Centre without running an extension. The extension's work is one shared function, which is what the simulator test runs (see [Testing](#testing)), and its access to the keys was checked from the build: the keys are stored in the app's Keychain group, and the extension's entitlements name that group.
+
+**Why Mozilla and not Google:** Google's service would need a client rebuilt from observation and outbound ports 5228 to 5230. Mozilla's is an open, documented WebSocket protocol on port 443, with a maintained reference client ([Bitwarden's autopush-manager](https://github.com/bitwarden/autopush-manager)).
+
+## The parts
+
+### On the phone
+
+| File | What it does |
+|------|--------------|
+| [Shared/PushKeys.swift](../Shared/PushKeys.swift) | The key pair and `auth`, in the Keychain: this device only, readable once the phone has been unlocked since it started |
+| [Shared/WebPushCrypto.swift](../Shared/WebPushCrypto.swift) | Decrypts a web push, `aesgcm` or `aes128gcm` |
+| [Shared/InstagramPush.swift](../Shared/InstagramPush.swift) | Reads Instagram's notification and turns an Apple push into the notification to show |
+| [NotificationService/](../NotificationService/NotificationService.swift) | The notification extension: runs the above when a push arrives, and adds the sender's picture |
+| [Unreeled/Notifications/PushNotifications.swift](../Unreeled/Notifications/PushNotifications.swift) | Turning on and off, keeping it working, taps and arrivals |
+| [Unreeled/Notifications/PushRelay.swift](../Unreeled/Notifications/PushRelay.swift) | The two calls to the relay |
+| [Unreeled/Views/Notifications.swift](../Unreeled/Views/Notifications.swift) | The page that asks, and the rows in Settings |
+
+`Shared/` belongs to both the app and the extension. The extension can read the keys because its entitlements name the app's Keychain group ([Config/NotificationService.entitlements](../Config/NotificationService.entitlements)); it never writes them.
+
+What the app does besides turning on and off:
+
+- **Keeps it working.** At launch and when it comes back to the front, it asks iOS for the phone's address at Apple. When that has changed, and otherwise once a day, it pairs again, which keeps the same push address unless the relay has had to replace it. When the relay answers with a new push address, or a week has passed, it registers with Instagram again.
+- **Follows the login.** Logging out, by any route, turns notifications off. A relay that can't be reached then is told at each later launch until it has heard.
+- **A tap** opens the conversation for a message, Activity for anything else. If the extension didn't get to a push, the app decrypts it when you tap.
+- **While the app is open,** a notification shows as a banner, except one about the conversation on screen, and the inbox and the open conversation look again right away.
+- **Says which of Apple's two services** its address belongs to (sandbox for a build run from Xcode, production for a distributed one), read from the build's provisioning profile, since an address from one doesn't work at the other.
+
+### The relay
+
+One WebSocket to Mozilla carries a channel per phone. On a push the relay looks up the phone and forwards the body and header fields, untouched, to Apple. It stores a random ID per phone, the Mozilla channel and its address, and the phone's Apple token: no keys, nothing readable.
+
+It's written twice, with the same calls and the same push:
+
+- [relay/](../relay/README.md): a Node program with one dependency (`ws`), for any machine that's always on.
+- [relay/worker/](../relay/worker/README.md): a Cloudflare Worker. A Durable Object holds the connection and the phones' records, and an alarm every minute brings it back after Cloudflare restarts it. This is where the project's relay is meant to run: nothing to host, HTTPS and the name included, and one object fits in what the paid plan includes.
+
+How to run each and what each setting does is in its README.
+
+What it handles on its own:
+
+- **Dropped connections.** Mozilla closes the socket every twenty minutes or so. The relay reconnects with the same identity and channels, so the push addresses stay good, and Mozilla delivers what arrived meanwhile.
+- **A lost identity.** If Mozilla answers with a new identity, every channel of the old one is gone. The relay registers a new channel for each phone at once; the phone learns the new address the next time it pairs, within a day of use, and gives it to Instagram.
+- **Phones that are gone.** When Apple says a token no longer exists (the app was deleted), the relay forgets the phone and closes its channel.
+- **A push too large for Apple** (over 4 KB with the ciphertext in base64) goes without its content, as "New notification on Instagram". The sample pushes are about 800 bytes.
+
+### Mozilla's protocol, as the relay speaks it
+
+Connect to `wss://push.services.mozilla.com` and exchange JSON:
 
 | Direction | Message |
 |-----------|---------|
 | → hello | `{"messageType":"hello","use_webpush":true,"uaid":<saved or null>,"channelIDs":[<saved>]}` |
-| ← hello | `{"messageType":"hello","uaid":"…","status":200}` — **save the `uaid`** |
-| → register | `{"messageType":"register","channelID":"<uuidv4>","key":"<Instagram VAPID public key>"}` |
+| ← hello | `{"messageType":"hello","uaid":"…","status":200}`: save the `uaid` |
+| → register | `{"messageType":"register","channelID":"<uuid>","key":"<Instagram's public key>"}` |
 | ← register | `{"messageType":"register","channelID":"…","status":200,"pushEndpoint":"https://updates.push.services.mozilla.com/wpush/v2/…"}` |
-| ← notification | `{"messageType":"notification","channelID":"…","version":"…","data":"<base64url ciphertext>","headers":{"encoding":"aesgcm","encryption":"salt=…","crypto_key":"dh=…;p256ecdsa=…"}}` |
+| ← notification | `{"messageType":"notification","channelID":"…","version":"…","data":"<base64url>","headers":{"encoding":"aesgcm","encryption":"salt=…","crypto_key":"dh=…;p256ecdsa=…"}}` |
 | → ack | `{"messageType":"ack","updates":[{"channelID":"…","version":"…"}]}` |
 
-**Operational rules (learned from testing — these are the whole maintenance story):**
-- **Keepalive:** send a WebSocket ping every ~60s.
-- **Reconnect:** Mozilla drops the socket about every ~20 min (close code 1006). On reconnect, send `hello` with the **saved `uaid`** and **`channelIDs`** — this *resumes the same endpoint* (no re-registration). Messages that arrived while offline are queued by Mozilla (web-push TTL) and delivered on resume. This is proven: the test client lost the socket twice and still received every notification.
-- **Persist** `uaid`, `channelID`, and (on the phone) the ECDH private key + `auth`, so a restart resumes the same endpoint.
-- **Header field names** arrive as `crypto_key` (underscore), `encryption`, `encoding` — note the underscore.
-- **Ports:** outbound **443** only. No special ports.
+A channel registered with a `key` only accepts pushes signed by that key, here Instagram's. The header fields arrive as `crypto_key` (with an underscore), `encryption` and `encoding`. Only outbound port 443 is needed.
 
----
+### The encryption
 
-## The crypto (legacy `aesgcm`) — validated
-
-From the forwarded push: `data` (ciphertext + 16-byte GCM tag), `encryption`→`salt`, `crypto_key`→`dh` (server public key, 65 bytes). The phone holds `private`, `auth`, and its own public key `clientPub`.
+Instagram uses the older `aesgcm` encoding. From the push: `data` (ciphertext with a 16-byte tag), the salt from `encryption`, the sender's public key `dh` from `crypto_key`. The phone has its private key, `auth`, and its own public key.
 
 ```
 shared  = ECDH(private, dh)
-prkKey  = HMAC_SHA256(auth,  shared)
-ikm     = HMAC_SHA256(prkKey, "Content-Encoding: auth\0" || 0x01)
-prk     = HMAC_SHA256(salt,  ikm)
-keyInfo = "Content-Encoding: aesgcm\0" "P-256\0" ‖ 0x00 0x41 ‖ clientPub ‖ 0x00 0x41 ‖ dh
-aesKey  = HMAC_SHA256(prk, keyInfo || 0x01)[0..16]
-nonce   = HMAC_SHA256(prk, ("Content-Encoding: nonce\0P-256\0"‖…) || 0x01)[0..12]
-plain   = AES_128_GCM_open(data, aesKey, nonce)           # tag appended
-payload = plain[2 + big_endian_u16(plain[0..2]) ..]       # strip 2-byte pad length + padding → JSON
+ikm     = HMAC(HMAC(auth, shared), "Content-Encoding: auth\0" ‖ 0x01)
+prk     = HMAC(salt, ikm)
+info(x) = x ‖ "\0P-256\0" ‖ 0x00 0x41 ‖ own public key ‖ 0x00 0x41 ‖ dh
+key     = HMAC(prk, info("Content-Encoding: aesgcm") ‖ 0x01)[0..16]
+nonce   = HMAC(prk, info("Content-Encoding: nonce")  ‖ 0x01)[0..12]
+plain   = AES-128-GCM-open(data, key, nonce)
+message = plain[2 + big-endian-u16(plain[0..2]) ...]        # after the padding
 ```
 
-Validated in Node against `web-push`'s `aesgcm` output (exact match). The on-phone port is [`WebPushCrypto.swift`](../Unreeled/Notifications/WebPushCrypto.swift) (CryptoKit).
+The standard `aes128gcm` encoding (RFC 8188 with RFC 8291) is read too, in case Instagram moves to it. The message is JSON: `type` (`direct_v2_text`, `direct_v2_media_share`, …), `message` (the notification's text), `t` (the conversation's name), `ppu` (the sender's picture), `n` (the message's ID) and `params`, where `t_id` is the conversation's ID.
 
----
+## Legitimate use and scope
 
-## Data model & privacy
+This feature gives people their **own** Instagram notifications on their **own** phone, without Instagram's app. It is built to be defensible and must stay that way:
 
-Per device the service stores: a random `deviceId`, the per-user autopush identity (`uaid` + `channelID`) it needs for transport, the Mozilla endpoint, and the APNs device token. It never stores the ECDH private key, the `auth` secret, or any decrypted content; in transit it holds only ciphertext. A full compromise leaks transport metadata + ciphertext, never message content. Log nothing from the forwarded body.
-
----
-
-## Legitimate use & scope
-
-This feature gives people their **own** Instagram notifications on their **own** phone, without Instagram's addictive app. It is built to be defensible and must stay that way:
-
-- **Consent & ownership.** Opt-in only; each person enrolls their *own* account from their *own* login. The service only handles notifications Instagram already sends *that* person.
-- **End-to-end encryption.** The service forwards ciphertext; only the phone decrypts. The operator cannot read messages.
+- **Consent and ownership.** Opt-in only; each person enrols their own account from their own login. The service only handles notifications Instagram already sends that person.
+- **End-to-end encryption.** The service forwards ciphertext; only the phone decrypts. The operator can't read messages.
 - **No third-party harm.** No scraping, mass-messaging, targeting, or acting on anyone.
-- **User control.** Off anytime; logout retires it. Minimal metadata; nothing from the body logged.
-- **Honest about risk.** It uses Instagram's web push and Mozilla's push service in ways neither formally supports for this; disclosed, and the user accepts the account / ToS / fragility risk before enabling.
-- **Open, documented technique.** Receiving web push outside a browser via Mozilla's autopush is a documented protocol with a maintained reference client; it is not the exploit of a security vulnerability.
+- **User control.** Off at any time; logging out retires it. Minimal metadata; nothing from the body is logged.
+- **Honest about risk.** It uses Instagram's web push and Mozilla's push service in ways neither formally supports for this. The app says so before you turn it on.
+- **Open, documented technique.** Receiving web push outside a browser through Mozilla's service is a documented protocol with a maintained reference client; it isn't the exploit of a security vulnerability.
 
-It is **not** for evading detection to harm anyone, reaching data a user isn't entitled to, or operating on accounts without consent, and must not be repurposed for those.
+It is **not** for evading detection to harm anyone, reaching data a person isn't entitled to, or operating on accounts without consent, and must not be repurposed for those.
 
----
+## Building with notifications
 
-## Deployment (Oracle Always-Free) — how-to
+A build offers notifications only when it knows a relay, and can only receive them when it's signed for push. Both are set in `Config/Local.xcconfig` (see [Local.example.xcconfig](../Config/Local.example.xcconfig)):
 
-- The Mozilla client is tiny per user (one WebSocket + a few KB), so the **1 GB AMD x86** Always-Free box serves many users. Use AMD x86 (not ARM — unrelated to the receiver now, but keep it standard).
-- Only outbound **443** is needed (no 5228-5230). Oracle's default egress is fine.
-- Oracle reclaims Always-Free VMs idle <20% CPU/network over 7 days — keep a token workload.
-- Run under systemd; persist per-user identities in SQLite; re-open WebSockets on boot.
+```
+UNREELED_ENTITLEMENTS = Config/Push.entitlements
+UNREELED_RELAY_HOST = relay.example.com
+UNREELED_RELAY_TOKEN =
+```
 
----
+- `UNREELED_ENTITLEMENTS` needs a team in the Apple Developer Program. A free team can't sign for push; leave the line out and the app builds as before.
+- The relay has to hold a push key of the **same team**, and list the app's bundle ID in `APNS_TOPIC`: Apple only accepts a push for an app from that app's team. So whoever signs the app runs the relay, or shares one with people who build with the same team.
 
-## Risks (much reduced vs the FCM path)
+Simulator builds always carry the push entitlement, which costs nothing there and lets the simulator get a real address from Apple.
 
-1. **Mozilla or Instagram change/stop delivering** — staleness watch + re-register from the app. Lower risk than FCM (open protocol, no reverse-engineered registration).
-2. **Apple Developer Program** — blocks APNs + the NSE. (Enrolling after the gates are cleared.)
-3. **Instagram account risk** — unsanctioned; disclosed to users.
-4. **Connection churn** — handled by keepalive + reconnect (proven).
+## Testing
 
----
+Without an Apple key or an Instagram account, everything but Apple's leg can be run on a Mac. The stand-in sender plays Instagram:
 
-## Build plan
+```bash
+cd relay && npm install
+INSTAGRAM_VAPID_KEY=$(node tools/sample-push.mjs key) APNS_OUTBOX=/tmp/outbox npm start
+```
 
-1. ✅ **Validate the receiver (Mozilla) + the crypto** — done.
-2. **Central service** — the Mozilla client + pairing API + APNs forwarder + SQLite, with a README/runbook. *(In progress; needs no Apple account.)*
-3. **iOS** — keypair/Keychain, APNs registration, opt-in + risk UI, pairing, `registerWebPush`, wire up the NSE. *(Needs the Apple Developer Program.)*
-4. **Deploy** to Oracle; end-to-end test on the iPhone. *(Needs Apple.)*
-5. **Harden** — staleness watch, retirement on logout, minimal metrics.
+That relay accepts pushes from the stand-in sender instead of Instagram, and writes each push it would send to Apple into the outbox. Then:
 
----
+1. Run a Debug build in the simulator with `-relay http://localhost:8787 -pushDryRun YES`. The dry run does everything but register with Instagram, and writes what it would have registered to the app's `Library/Caches/push-dry-run.json`.
+2. Turn notifications on in the app. The relay logs the pairing.
+3. Send a push through Mozilla to the relay: `node tools/sample-push.mjs send <path to push-dry-run.json> --title "Someone" --message "Hello"`.
+4. Deliver the file that appears in the outbox: `xcrun simctl push booted <file>`.
 
-## Runbook (filled out as the service is built)
+With the app open, the banner shows the decrypted text: Debug builds do the extension's work themselves for a push that skipped it. With the app closed, the banner shows the relay's words, and a tap still opens the right conversation. `node tools/sample-push.mjs apns … > push.apns` makes such a file directly, with no relay or network; `--encoding aes128gcm`, `--type like` and `--thread <conversation ID>` vary it.
 
-- **Prototype receiver:** `scratchpad/mozilla-receive.mjs` (Stage B test client) and `scratchpad/mozilla-selftest.mjs` (Stage A) — the basis for the production client.
-- **Register a device to Instagram (test):** launch the Debug app with `-probe "PUSH <endpoint> <p256dh> <auth>"`; the app's `Library/Caches/network-log.jsonl` shows `{"pushRegistration":"updates.push.services.mozilla.com","status":"ok"}`.
-- **Troubleshooting:** no notifications → check the app registered (network log) and the WebSocket is connected; dropped socket → reconnect handles it; stale endpoint → re-register from the app.
-- *(Service install, device pairing, APNs setup, and rotation/retirement how-tos land here with step 2.)*
+A registration made in a dry run is turned off by the next launch that isn't one, so it can never reach Instagram.
+
+The relay has its own tests, against stand-ins for Mozilla and Apple: `npm test`.
+
+Registering for real writes to an account: Instagram starts sending that account's notifications to the address. Do it on your own account, knowingly. The Debug `-probe "PUSH <address> <p256dh> <auth>"` registers by hand.
+
+## Risks
+
+1. **Instagram or Mozilla stop delivering.** Instagram has been seen to stop sending to a login while still accepting its registration ([mautrix/meta#454](https://github.com/mautrix/meta/issues/454)). The app registers again every week and whenever the address changes; whether that's enough isn't known yet.
+2. **The account.** This is as unofficial as the rest of Unreeled, and the app says so before you turn it on.
+3. **The relay's operator** sees each phone's Apple token and the time and size of each notification. Not its content, and not whose account it's for.
+
+## What's left
+
+The first step needs nothing from Apple; the rest waits on the Apple Developer Program:
+
+1. **Watch the deployed relay** for a few days: `https://relay.unreeled.app/health` should keep saying `"mozilla": true`. If the connection doesn't hold on Cloudflare, the Node relay on an always-on machine does the same job.
+2. **A push key.** In the developer account: Keys › new key with Apple Push Notifications service. That gives the `.p8` file, its key ID and the team ID for the relay's secrets; deploy again with them ([relay/worker/README.md](../relay/worker/README.md)), and its `/apple` check should then answer `BadDeviceToken`.
+3. **A signed build** with the three settings above, on an iPhone.
+4. **The first real notification:** turn notifications on, have someone send a message, and see it arrive decrypted, with the sender's picture. This is the first run of the extension itself.
+5. **Then:** watch whether notifications keep coming over days, and publish the privacy policy's new section with the release that has notifications.

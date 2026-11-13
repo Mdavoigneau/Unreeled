@@ -22,7 +22,7 @@ Retro but sober, after Instagram around 2016:
 - **Tabs:** tapping the open tab again goes back to its first screen. Direct hides the tab bar, as the old app did, and so does the keyboard.
 - **Instant:** what you do shows at once (a message, a story reply, a like) and goes to Instagram in the background. A small "✓ Delivered" confirms it once Instagram has it; if it fails, it says so and offers to retry, or puts things back.
 
-Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars in [Chrome.swift](../Unreeled/Views/Chrome.swift). The app icon is drawn by [Design/make_icon.py](../Design/make_icon.py).
+Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars in [Chrome.swift](../Unreeled/Views/Chrome.swift). The app icon is [AppIcon.png](../Unreeled/Assets.xcassets/AppIcon.appiconset/AppIcon.png): the U of the wordmark in white on steel blue. It's a copy of [Design/AppIcon.png](../Design/AppIcon.png), the flat export of [Design/AppIcon.icon](../Design/AppIcon.icon), which opens in Icon Composer (in Xcode › Open Developer Tool). [Design/glyph.swift](../Design/glyph.swift) draws the U.
 
 ## First launch
 
@@ -101,9 +101,22 @@ The heart tab, native:
 
 Opening Activity marks nothing as seen, as on the website. It reloads when you come back to it, at most every 30 seconds, and when you pull down.
 
+## Notifications
+
+Only in a build made with a relay, and off until you turn them on: [NOTIFICATIONS.md](NOTIFICATIONS.md) has the whole design. Not yet tried on an iPhone.
+
+- **Asking.** Once, after logging in, a page says what notifications are and what turning them on means, with "Turn On" and "Not Now". "Turn On" brings up iOS's own question. The same page comes up when you switch them on in Settings.
+- **In Settings:** a switch, since when they've been on, a way into iOS Settings when notifications are off for Unreeled there, and "Choose What Instagram Sends", which opens Instagram's own page for the kinds of notification, with its "Messages only".
+- **What shows:** the conversation's name and the message for a message, with the sender's picture; the notification's text for likes, follows and the rest. Messages stack by conversation. No badge on the app's icon.
+- **A tap** opens the conversation, or Activity.
+- **While the app is open,** a notification shows as a banner unless it's about the conversation on screen, and the inbox's count and the open conversation refresh at once instead of waiting.
+- **Off** in Settings or by logging out: the keys are deleted and the relay forgets the phone.
+
+The code is in [Unreeled/Notifications](../Unreeled/Notifications), [Shared](../Shared) and [NotificationService](../NotificationService).
+
 ## Known limits
 
-- No push notifications. They still come from Instagram's own app.
+- Notifications need a build made with a relay. Without one, they still come from Instagram's own app.
 - Messages arrive within 15 seconds while a conversation is open, not instantly. What you send shows at once.
 - Hearts are the only reaction you can put on a message, and you can't reply to a particular message yet.
 - Stories go up as they are: no text, stickers, music or Close Friends.

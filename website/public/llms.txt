@@ -8,9 +8,9 @@ Key facts:
 - **Install:** from AltStore PAL in the EU, Japan and Brazil (coming soon). Anywhere else, build it from source with Xcode; with a free Apple ID, the app has to be reinstalled every 7 days.
 - **Not on the App Store:** App Review requires permission from the services an app uses.
 - **Risk:** Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it. Use it at your own risk, and keep likes and follows at a human pace.
-- **Privacy:** Unreeled collects nothing. No accounts of its own, no analytics, no tracking, no third-party code. You log in on Instagram's own page. The only other request the app makes downloads the project's list of Instagram query IDs from this site.
-- **Features:** Home (stories, then posts from the accounts you follow, newest first), Stories (watch, like, reply, post your own), Messages (inbox with search; text, photos, videos, voice messages, hearts), Activity (likes, new followers, follow requests), profiles, posts with comments, and account search. Reels from accounts you follow can be switched on in Profile › gear; they show one at a time, with no feed to swipe.
-- **Not in this version:** push notifications, starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.
+- **Privacy:** Unreeled collects nothing. No accounts of its own, no analytics, no tracking, no third-party code. You log in on Instagram's own page. The only other request the app makes downloads the project's list of Instagram query IDs from this site. Notifications are the one exception, and only if you turn them on in a build that has them: they pass through a relay, encrypted so that only the phone can read them.
+- **Features:** Home (stories, then posts from the accounts you follow, newest first), Stories (watch, like, reply, post your own), Messages (inbox with search; text, photos, videos, voice messages, hearts), Activity (likes, new followers, follow requests), profiles, posts with comments, and account search. Reels from accounts you follow can be switched on in Settings (the gear on your profile); they show one at a time, with no feed to swipe.
+- **Not in this version:** notifications in the build you can install (the code is there, for a build made with its own relay), starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.
 - **License:** GNU General Public License, version 3. Free, with no ads and nothing to buy.
 - **Contact:** hello@unreeled.app, or an issue on GitHub.
 
@@ -27,6 +27,7 @@ Key facts:
 - [Features](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/FEATURES.md): every screen in detail, and known limits
 - [How it works](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/HOW-IT-WORKS.md): the website's GraphQL queries the app sends, and how each was tested
 - [Maintaining](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/MAINTAINING.md): what to do when Instagram changes a query
+- [Notifications](https://raw.githubusercontent.com/Mdavoigneau/Unreeled/main/docs/NOTIFICATIONS.md): how optional notifications reach the phone through a relay that can't read them
 
 ## Optional
 

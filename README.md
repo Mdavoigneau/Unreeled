@@ -37,7 +37,7 @@ The **Unreeled** scheme builds the Debug version, with the tools for finding Ins
 
 ## Privacy
 
-Unreeled collects nothing. You log in on Instagram's own page, and your account goes only between your phone and Instagram. There are no analytics, no tracking and no third-party code. The only other request the app makes downloads the project's list of Instagram query IDs. The full policy is in [PRIVACY.md](PRIVACY.md).
+Unreeled collects nothing. You log in on Instagram's own page, and your account goes only between your phone and Instagram. There are no analytics, no tracking and no third-party code. The only other request the app makes downloads the project's list of Instagram query IDs. Notifications, in a build that has them and only if you turn them on, pass through a relay encrypted so that only your phone can read them. The full policy is in [PRIVACY.md](PRIVACY.md).
 
 ## How it works
 
@@ -47,7 +47,7 @@ When Instagram changes a query, its ID changes and the screen that uses it stops
 
 ## Not in this version
 
-Push notifications, starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.
+Notifications in the build you can install (the code is there, for a build made with its own relay: [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)), starting a new conversation, searching inside messages, reactions other than the heart, replying to a particular message, group settings, story text, stickers and music, Close Friends, posting to the feed, writing comments, following and unfollowing, and saved posts.
 
 ## Contributing
 

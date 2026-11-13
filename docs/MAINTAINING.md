@@ -60,7 +60,7 @@ Launch arguments that help when testing:
 - `-standInConversations YES` opens a blank stand-in instead of a conversation, to test the inbox without opening anyone's messages or marking them read.
 - `-testVoiceClip YES` records a test tone instead of the microphone.
 - `-queriesURL <url>` takes query updates from that address.
-- `-pushTestDryRun YES` turns the push test on without registering anything with Instagram, to try its screens (see [relay/README.md](../relay/README.md)).
+- `-relay <address>` uses that notification relay, such as `http://localhost:8787`, and `-pushDryRun YES` turns notifications on without registering anything with Instagram. Together they try notifications in the simulator: see Testing in [NOTIFICATIONS.md](NOTIFICATIONS.md).
 
 ## Testing on a real account
 
