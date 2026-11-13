@@ -6,3 +6,14 @@
 
 DEVELOPMENT_TEAM = ABCDE12345
 UNREELED_BUNDLE_ID = com.yourname.Unreeled
+
+// Notifications, optional (docs/NOTIFICATIONS.md). They need a team in the Apple Developer
+// Program (a free team can't sign for push) and a relay you run with that team's push key
+// (relay/README.md). To turn them on, remove the slashes from these three lines:
+// UNREELED_ENTITLEMENTS: lets a build for an iPhone receive pushes.
+// UNREELED_RELAY_HOST: your relay's host name, reached over https.
+// UNREELED_RELAY_TOKEN: its PAIRING_TOKEN, if you set one.
+
+// UNREELED_ENTITLEMENTS = Config/Push.entitlements
+// UNREELED_RELAY_HOST = relay.example.com
+// UNREELED_RELAY_TOKEN =

@@ -273,6 +273,12 @@ final class InboxModel {
         loadedAt = nil
     }
 
+    /// The loaded conversation with this ID, in either of the two forms Instagram uses.
+    func thread(withID id: String?) -> DirectThread? {
+        guard let id else { return nil }
+        return threads.first { $0.threadId == id || $0.threadFbid == id }
+    }
+
     /// The four most recent conversations and the three you open most, loaded ahead a second
     /// apart whenever Instagram has something newer than the saved copy, with the pictures of
     /// the first three. Loading a conversation doesn't mark it read: only opening it does.
@@ -377,6 +383,7 @@ private struct ThreadRow: View {
 struct ConversationView: View {
     @Environment(Session.self) private var session
     @Environment(InboxModel.self) private var inbox
+    @Environment(PushNotifications.self) private var notifications
     @State private var model: ConversationModel
     @State private var draft = ""
     @State private var picked: [PhotosPickerItem] = []
@@ -483,6 +490,10 @@ struct ConversationView: View {
                     await model.refresh(api: session.api)
                 }
             }
+        }
+        // With notifications on, one arriving says there's something new right away.
+        .onChange(of: notifications.arrivals) {
+            Task { await model.refresh(api: session.api) }
         }
     }
 

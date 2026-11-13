@@ -21,22 +21,29 @@ enum Notice {
 struct NoticePoints: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            point(
-                "person.2", "Just your friends",
-                "Posts from the people you follow, newest first, their stories, and your messages. No Reels, no suggestions, no ads."
+            NoticePoint(
+                symbol: "person.2", title: "Just your friends",
+                text: "Posts from the people you follow, newest first, their stories, and your messages. No Reels, no suggestions, no ads."
             )
-            point(
-                "exclamationmark.triangle", "Unofficial",
-                "Unreeled isn't made or endorsed by Instagram or Meta. Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it. Use it at your own risk."
+            NoticePoint(
+                symbol: "exclamationmark.triangle", title: "Unofficial",
+                text: "Unreeled isn't made or endorsed by Instagram or Meta. Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it. Use it at your own risk."
             )
-            point(
-                "lock", "Private",
-                "You log in on Instagram's own page. Your login and everything you see go only between this phone and Instagram. No analytics, no tracking."
+            NoticePoint(
+                symbol: "lock", title: "Private",
+                text: "You log in on Instagram's own page. Your login and everything you see go only between this phone and Instagram. No analytics, no tracking."
             )
         }
     }
+}
 
-    private func point(_ symbol: String, _ title: String, _ text: String) -> some View {
+/// One thing to know on a page that asks for your agreement: a symbol, a title and a few lines.
+struct NoticePoint: View {
+    let symbol: String
+    let title: String
+    let text: String
+
+    var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Image(systemName: symbol)
                 .font(.system(size: 21, weight: .light))

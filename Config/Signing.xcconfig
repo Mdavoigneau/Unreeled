@@ -1,9 +1,16 @@
-// Signing for the app target. Don't put your own team here: copy Local.example.xcconfig to
-// Local.xcconfig (git ignores it) and set your team and bundle ID there.
+// Signing for the app and its notification extension. Don't put your own team here: copy
+// Local.example.xcconfig to Local.xcconfig (git ignores it) and set your team and bundle ID there.
 //
 // Without it, the app builds for the simulator under the placeholder bundle ID below.
 
 DEVELOPMENT_TEAM =
 UNREELED_BUNDLE_ID = com.example.unreeled
+
+// Notifications (docs/NOTIFICATIONS.md) need a team in the Apple Developer Program and a relay
+// holding that team's push key. Left empty, the app builds without them and doesn't offer
+// notifications. Local.example.xcconfig says what to set.
+UNREELED_ENTITLEMENTS =
+UNREELED_RELAY_HOST =
+UNREELED_RELAY_TOKEN =
 
 #include? "Local.xcconfig"

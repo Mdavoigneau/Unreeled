@@ -24,9 +24,9 @@ struct SettingsView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                 }
-                if let test = PushTest.bundled {
+                if PushNotifications.isOffered {
                     SettingsSection(title: "Notifications") {
-                        PushTestRow(test: test)
+                        NotificationsSettings()
                     }
                 }
                 SettingsSection(title: "Account") {

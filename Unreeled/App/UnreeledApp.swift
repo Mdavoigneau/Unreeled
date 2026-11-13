@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct UnreeledApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var session = Session()
 
     init() {
@@ -16,16 +17,19 @@ struct UnreeledApp: App {
         WindowGroup {
             RootView()
                 .environment(session)
+                .environment(PushNotifications.shared)
         }
     }
 }
 
 /// The notice the first time, then Instagram's login page until you're logged in, then the
-/// native app. A build made for the push test asks about it once, before the app.
+/// native app. A build that can have notifications asks about them once, before the app.
 struct RootView: View {
     @Environment(Session.self) private var session
+    @Environment(PushNotifications.self) private var notifications
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(Notice.key) private var acceptedNotice = 0
-    @AppStorage(PushTest.askedKey) private var askedPushTest = false
+    @AppStorage(PushNotifications.askedKey) private var askedNotifications = false
     @State private var stories = StoriesModel()
     @State private var inbox = InboxModel()
 
@@ -69,6 +73,12 @@ struct RootView: View {
         }
         .preferredColorScheme(.light)
         .tint(Theme.accent)
+        // Notifications follow the login: kept working while it lasts, undone when it ends,
+        // however it ends.
+        .task(id: session.state) { await followLogin() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await followLogin() } }
+        }
         #if DEBUG
         .task(id: session.isLoggedIn) {
             if session.isLoggedIn { await DebugProbe.runIfRequested(api: session.api) }
@@ -85,12 +95,20 @@ struct RootView: View {
             case .loggedOut:
                 LoginView()
             case .loggedIn:
-                if let test = PushTest.bundled, !askedPushTest {
-                    PushTestOffer(test: test)
+                if PushNotifications.isOffered, !askedNotifications, !notifications.isOn {
+                    NotificationsOffer { askedNotifications = true }
                 } else {
                     home
                 }
             }
+        }
+    }
+
+    private func followLogin() async {
+        switch session.state {
+        case .loggedIn(let userID): await notifications.refresh(api: session.api, userID: userID)
+        case .loggedOut: await notifications.turnOff()
+        case .unknown: break
         }
     }
 
@@ -118,6 +136,7 @@ struct RootView: View {
 struct MainView: View {
     @Environment(Session.self) private var session
     @Environment(InboxModel.self) private var inbox
+    @Environment(PushNotifications.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
     @State private var tab = AppTab.home
     @State private var opened: Set<AppTab> = [.home]
@@ -159,6 +178,14 @@ struct MainView: View {
             Task { await QueryUpdates.check(afterFailure: false) }
             Task { await inbox.load(api: session.api, force: false) }
         }
+        .onChange(of: notifications.opened, initial: true) { _, opened in
+            if let opened { open(opened) }
+        }
+        .onChange(of: notifications.arrivals) {
+            // A notification while the app is open: the paper plane's count is out of date.
+            Task { await inbox.load(api: session.api) }
+        }
+        .onChange(of: visibleThread, initial: true) { notifications.visibleThread = visibleThread }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             isTyping = true
         }
@@ -174,6 +201,37 @@ struct MainView: View {
 
     private func path(for tab: AppTab) -> Binding<[Route]> {
         Binding { paths[tab] ?? [] } set: { paths[tab] = $0 }
+    }
+
+    /// The IDs of the conversation on screen, if one is.
+    private var visibleThread: Set<String> {
+        guard case .thread(let thread) = paths[tab]?.last else { return [] }
+        return Set([thread.threadId, thread.threadFbid].compactMap { $0 })
+    }
+
+    /// Opens what a tapped notification was about: its conversation for a message, Activity
+    /// for the rest.
+    private func open(_ opened: InstagramPush.Routing) {
+        notifications.opened = nil
+        guard opened.isDirect else {
+            tab = .activity
+            paths[.activity] = []
+            return
+        }
+        tab = .home
+        if let thread = inbox.thread(withID: opened.threadID) {
+            paths[.home] = [.inbox, .thread(thread)]
+            return
+        }
+        // Not among the conversations loaded so far: the inbox now, and on to the conversation
+        // once Instagram's list has it, if you're still there.
+        paths[.home] = [.inbox]
+        Task {
+            await inbox.load(api: session.api)
+            if tab == .home, paths[.home] == [.inbox], let thread = inbox.thread(withID: opened.threadID) {
+                paths[.home]?.append(.thread(thread))
+            }
+        }
     }
 
     @ViewBuilder

@@ -6,9 +6,42 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000024 /* UnreeledNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A10000000000000000000020 /* UnreeledNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000025 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000000000000000000000A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000021;
+			remoteInfo = UnreeledNotifications;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000000000000000000027 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000000000000000000024 /* UnreeledNotifications.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* Unreeled.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Unreeled.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000010 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000000020 /* UnreeledNotifications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = UnreeledNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000030 /* Unreeled-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Unreeled-Info.plist"; sourceTree = "<group>"; };
+		A10000000000000000000031 /* Push.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Push.entitlements; sourceTree = "<group>"; };
+		A10000000000000000000032 /* NotificationService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "NotificationService-Info.plist"; sourceTree = "<group>"; };
+		A10000000000000000000033 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -17,10 +50,27 @@
 			path = Unreeled;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000022 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000023 /* NotificationService */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = NotificationService;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		A10000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000029 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -34,6 +84,8 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000002 /* Unreeled */,
+				A10000000000000000000023 /* NotificationService */,
+				A10000000000000000000022 /* Shared */,
 				A10000000000000000000011 /* Config */,
 				A10000000000000000000005 /* Products */,
 			);
@@ -43,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000001 /* Unreeled.app */,
+				A10000000000000000000020 /* UnreeledNotifications.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -51,6 +104,10 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000010 /* Signing.xcconfig */,
+				A10000000000000000000030 /* Unreeled-Info.plist */,
+				A10000000000000000000031 /* Push.entitlements */,
+				A10000000000000000000032 /* NotificationService-Info.plist */,
+				A10000000000000000000033 /* NotificationService.entitlements */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -65,13 +122,16 @@
 				A10000000000000000000008 /* Sources */,
 				A10000000000000000000003 /* Frameworks */,
 				A10000000000000000000009 /* Resources */,
+				A10000000000000000000027 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A10000000000000000000026 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A10000000000000000000002 /* Unreeled */,
+				A10000000000000000000022 /* Shared */,
 			);
 			name = Unreeled;
 			packageProductDependencies = (
@@ -79,6 +139,29 @@
 			productName = Unreeled;
 			productReference = A10000000000000000000001 /* Unreeled.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000021 /* UnreeledNotifications */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000000002B /* Build configuration list for PBXNativeTarget "UnreeledNotifications" */;
+			buildPhases = (
+				A10000000000000000000028 /* Sources */,
+				A10000000000000000000029 /* Frameworks */,
+				A1000000000000000000002A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000000000000000000023 /* NotificationService */,
+				A10000000000000000000022 /* Shared */,
+			);
+			name = UnreeledNotifications;
+			packageProductDependencies = (
+			);
+			productName = UnreeledNotifications;
+			productReference = A10000000000000000000020 /* UnreeledNotifications.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -91,6 +174,9 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					A10000000000000000000006 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					A10000000000000000000021 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 				};
@@ -110,12 +196,20 @@
 			projectRoot = "";
 			targets = (
 				A10000000000000000000006 /* Unreeled */,
+				A10000000000000000000021 /* UnreeledNotifications */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		A10000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000002A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -132,7 +226,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000028 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000026 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000021 /* UnreeledNotifications */;
+			targetProxy = A10000000000000000000025 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A1000000000000000000000C /* Debug */ = {
@@ -259,10 +368,13 @@
 			baseConfigurationReference = A10000000000000000000010 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "$(UNREELED_ENTITLEMENTS)";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = Config/Push.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Unreeled-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Unreeled;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take photos and videos to post.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice messages and videos.";
@@ -288,10 +400,13 @@
 			baseConfigurationReference = A10000000000000000000010 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "$(UNREELED_ENTITLEMENTS)";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = Config/Push.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/Unreeled-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Unreeled;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take photos and videos to post.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Record voice messages and videos.";
@@ -306,6 +421,56 @@
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(UNREELED_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		A1000000000000000000002C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000010 /* Signing.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/NotificationService-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Unreeled;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(UNREELED_BUNDLE_ID).NotificationService";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A1000000000000000000002D /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000010 /* Signing.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/NotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/NotificationService-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Unreeled;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(UNREELED_BUNDLE_ID).NotificationService";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -329,6 +494,15 @@
 			buildConfigurations = (
 				A1000000000000000000000C /* Debug */,
 				A1000000000000000000000D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000000002B /* Build configuration list for PBXNativeTarget "UnreeledNotifications" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1000000000000000000002C /* Debug */,
+				A1000000000000000000002D /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

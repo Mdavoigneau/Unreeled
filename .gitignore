@@ -5,11 +5,5 @@ build/
 *.xcarchive
 *.ipa
 
-# The push test's address and keys, in a build made for it (see relay/README.md).
-Unreeled/PushTest.json
-
 # Your own signing settings (see Config/Local.example.xcconfig).
 Config/Local.xcconfig
-
-# Written by Design/make_icon.py to check the icon at home-screen sizes.
-Design/icon-preview.png
