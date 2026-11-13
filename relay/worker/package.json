@@ -1,0 +1,24 @@
+{
+	"name": "unreeled-relay-worker",
+	"private": true,
+	"description": "Unreeled's notification relay as a Cloudflare Worker: receives each phone's Instagram web push from Mozilla's push service and forwards it, still encrypted, through Apple's",
+	"license": "GPL-3.0-only",
+	"type": "module",
+	"scripts": {
+		"dev": "cf dev",
+		"build": "cf build",
+		"deploy": "cf deploy",
+		"typecheck": "cf workers types && tsc",
+		"test": "node --test test/"
+	},
+	"engines": {
+		"node": ">=22.18"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "beta",
+		"cf": "1.0.0-beta.28",
+		"typescript": "^7.0.2",
+		"vite": "^8.3.0",
+		"ws": "^8.23.0"
+	}
+}

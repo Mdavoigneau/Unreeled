@@ -1,32 +1,33 @@
 # Unreeled notification relay
 
-The central, opt-in, **end-to-end-encrypted** service that gives Unreeled instant Instagram
-notifications on the iPhone. It receives each opt-in user's Instagram web push from **Mozilla's push
-service** and forwards it — **still encrypted** — to their phone via **APNs**. The relay never holds a
-decryption key, so it cannot read anyone's notifications.
-
-Design and rationale: [`../docs/NOTIFICATIONS.md`](../docs/NOTIFICATIONS.md).
+The service that passes Instagram's notifications on to iPhones running Unreeled. It receives each phone's web push from Mozilla's push service and forwards it, still encrypted, through Apple's. It never has a decryption key, so it can't read anyone's notifications.
 
 ```
-Instagram ──web push──▶ Mozilla push ──▶ relay (this) ──APNs (ciphertext)──▶ iPhone (decrypts)
+Instagram ──► Mozilla's push service ──► relay (this) ──► Apple's push service ──► iPhone (decrypts)
 ```
 
-## Why this is small and maintainable
+The design, and why it's built this way: [docs/NOTIFICATIONS.md](../docs/NOTIFICATIONS.md).
 
-- The receiver is Mozilla's **open, documented** WebSocket protocol — not reverse-engineered FCM.
-- **One** WebSocket connection serves **all** devices (one channel per device), so one tiny box
-  scales to many users.
-- The only dependency is `ws`. Everything else (HTTP/2 for APNs, crypto for the JWT, the JSON store)
-  is a Node built-in.
-- Outbound **443 only**. No special ports.
+It exists twice, answering the same calls and forwarding the same push:
+
+- **Here**, as a Node program for any machine that's always on. This is the one that has run longest against Mozilla's service.
+- **In [worker/](worker/README.md)**, as a Cloudflare Worker with a Durable Object: nothing to host. The project's own relay is this one, at `relay.unreeled.app`, for now as a dry run without Apple's key.
+
+The rest of this page is about the Node one. What the two share (the pairing calls, what's stored, the privacy) is the same in both.
+
+## Why it's small
+
+- The receiving side is Mozilla's open, documented WebSocket protocol.
+- One WebSocket serves every phone, with a channel each, so one small machine goes a long way.
+- The only dependency is `ws`. HTTP/2 to Apple, the signing for it and the JSON store are Node built-ins.
+- It needs outbound port 443 and nothing else.
 
 ## Requirements
 
-- Node ≥ 20.
-- For live delivery: an Apple Developer Program account and an **APNs auth key** (`.p8`). Without it
-  the relay runs in **dry-run** (it logs what it would send) so you can build and test everything else.
+- Node 20 or later.
+- To deliver: a team in the Apple Developer Program and a push key from it (a `.p8` file). Without one the relay runs as a **dry run**: it does everything else and logs what it would send.
 
-## Install & run
+## Run it
 
 ```bash
 cd relay
@@ -34,53 +35,55 @@ npm install
 npm start
 ```
 
-On start it connects to Mozilla, resumes any known devices, and serves the pairing API on `:8787`.
-APNs shows `LIVE` or `DRY-RUN` in the startup log.
+It connects to Mozilla, resumes the phones it knows, and serves the pairing API on port 8787. The log says whether Apple delivery is `LIVE` or `DRY-RUN`.
 
-## Configuration (environment variables)
+## Settings
 
-| Var | Default | Meaning |
-|-----|---------|---------|
-| `PORT` | `8787` | Pairing API port |
-| `DATA_FILE` | `./data/relay.json` | Where device records + the Mozilla `uaid` are stored |
-| `AUTOPUSH_URL` | `wss://push.services.mozilla.com` | Mozilla push endpoint |
-| `INSTAGRAM_VAPID_KEY` | *(built in)* | Instagram's web-push public key; override if Instagram rotates it |
-| `PAIRING_TOKEN` | *(none)* | If set, `/pair` and `/unpair` require `Authorization: Bearer <token>` |
-| `APNS_KEY_FILE` | — | Path to the `.p8` APNs auth key |
-| `APNS_KEY_ID` | — | The key's ID (from Apple) |
-| `APNS_TEAM_ID` | — | Your Apple team ID |
-| `APNS_TOPIC` | — | The app's bundle id (e.g. `app.unreeled`) |
-| `APNS_ENV` | `production` | `sandbox` to use Apple's sandbox |
+All through environment variables:
 
-## The pairing flow (how a phone gets connected)
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `PORT` | `8787` | The pairing API's port |
+| `DATA_FILE` | `./data/relay.json` | Where the phones' records and the Mozilla identity are kept |
+| `PAIRING_TOKEN` | none | If set, `/pair` and `/unpair` need `Authorization: Bearer <token>` |
+| `MAX_DEVICES` | `1000` | Pairing is refused beyond this many phones |
+| `APNS_KEY_FILE` | | Path to the `.p8` push key |
+| `APNS_KEY_ID` | | The key's ID, from Apple |
+| `APNS_TEAM_ID` | | The Apple team's ID |
+| `APNS_TOPIC` | | The app's bundle ID. Several, separated by commas, if the same team signs more than one build of the app; the first is used for a phone that names none |
+| `APNS_ENV` | `production` | `sandbox` to use Apple's sandbox service for a phone that doesn't say which it's on. The app does say |
+| `APNS_OUTBOX` | none | Dry run only: a folder to write each push to, as a file `xcrun simctl push` takes |
+| `INSTAGRAM_VAPID_KEY` | built in | Instagram's web push public key. Change it if Instagram does |
+| `AUTOPUSH_URL` | `wss://push.services.mozilla.com` | Mozilla's push service |
 
-1. The **phone** generates a P-256 keypair + a 16-byte `auth` (private key stays in its Keychain) and
-   gets an APNs device token.
-2. The phone calls **`POST /pair`** with `{ "apnsToken": "…" }`. The relay registers a new Mozilla
-   channel and replies `{ "deviceId": "…", "endpoint": "https://updates.push.services.mozilla.com/…" }`.
-3. The phone registers that **endpoint** with Instagram via `registerWebPush(endpoint, p256dh, auth)`
-   — using the phone's own `p256dh`/`auth`. **The relay never sees these keys.**
-4. From then on, Instagram → Mozilla → relay → (ciphertext over APNs) → phone decrypts in its
-   Notification Service Extension.
+Apple only accepts a push for an app from a key of the team that signed the app. So the relay's key and the builds it serves have to come from one team.
 
-To disconnect: **`POST /unpair`** with `{ "deviceId": "…" }`. (Instagram has no unregister call, so
-the endpoint also just goes stale once the channel is dropped.)
+## The pairing API
 
-`GET /health` → `{ ok, devices, mozilla }`.
+`POST /pair` with `{ "apnsToken": "<the device token in hex>", "sandbox": true, "topic": "<bundle ID>" }`. Only `apnsToken` is required. The relay registers a channel at Mozilla and answers `{ "deviceId": "…", "endpoint": "https://updates.push.services.mozilla.com/…" }`. The phone then registers that `endpoint` with Instagram, with its own public key and `auth`. The relay never sees those.
 
-### Quick local test (dry-run, no account needed)
+Pairing **again**, with the `deviceId` added, keeps the channel and its endpoint and only refreshes the token, the service and the topic. A `deviceId` the relay doesn't know is paired afresh, with a new endpoint, which is how a phone finds out that its old one is gone.
+
+`POST /unpair` with `{ "deviceId": "…" }` closes the channel and forgets the phone. Instagram has no call to take an endpoint back; it stops sending once the endpoint stops answering.
+
+`GET /health` answers `{ ok, devices, mozilla, apns, forwarded, failed, lastPushAt }`: how many phones, whether the Mozilla connection is up, `live` or `dry-run`, and counts since the relay started. Nothing about any one phone.
+
+## Try it without an Apple key
 
 ```bash
 npm start &
 curl -s localhost:8787/health
-curl -s -XPOST localhost:8787/pair -H 'content-type: application/json' -d '{"apnsToken":"testtoken"}'
+curl -s -XPOST localhost:8787/pair -H 'content-type: application/json' \
+  -d '{"apnsToken":"0000000000000000000000000000000000000000000000000000000000000000"}'
 ```
 
-You should get back a real `updates.push.services.mozilla.com` endpoint, and `/health` should show one
-device. (Registering that endpoint with a real Instagram account, then sending a message, is how the
-gate tests confirmed delivery — see `../docs/NOTIFICATIONS.md`.)
+The answer has a real `updates.push.services.mozilla.com` endpoint, and `/health` counts one phone.
 
-## Deploy on the Oracle box (systemd)
+`npm test` runs the relay against stand-ins for Mozilla and Apple on this machine: pairing, forwarding, reconnecting, a lost identity, phones that are gone.
+
+[tools/sample-push.mjs](tools/sample-push.mjs) stands in for Instagram: it encrypts a notification shaped like Instagram's with the `web-push` library and sends it through Mozilla's real service to a relay started with its key. With the app in the simulator that tests everything but Apple's leg; the steps are under Testing in [docs/NOTIFICATIONS.md](../docs/NOTIFICATIONS.md). `web-push` is a development dependency: a deployed relay doesn't install it.
+
+## On a server (systemd)
 
 ```ini
 # /etc/systemd/system/unreeled-relay.service
@@ -100,7 +103,7 @@ Environment=APNS_KEY_FILE=/opt/unreeled-relay/secrets/AuthKey.p8
 Environment=APNS_KEY_ID=XXXXXXXXXX
 Environment=APNS_TEAM_ID=YYYYYYYYYY
 Environment=APNS_TOPIC=app.unreeled
-# Environment=PAIRING_TOKEN=... (recommended; see Hardening)
+Environment=PAIRING_TOKEN=a-long-random-string
 
 [Install]
 WantedBy=multi-user.target
@@ -112,28 +115,22 @@ sudo systemctl enable --now unreeled-relay
 journalctl -u unreeled-relay -f
 ```
 
-Put a TLS reverse proxy (Caddy/nginx) in front of `:8787` so the phone pairs over HTTPS. Only
-outbound 443 to Mozilla/Apple is required; inbound is just your pairing port.
+Put HTTPS in front of port 8787 (Caddy, nginx, or a tunnel), so phones pair over HTTPS: the app reaches the relay at `https://<UNREELED_RELAY_HOST>`. Set `PAIRING_TOKEN` and give the same value to the app's build as `UNREELED_RELAY_TOKEN`, so that only your builds can pair. It ships inside the app, so it keeps strangers' scripts out rather than a determined person; `MAX_DEVICES` bounds what they could do.
 
-> **Oracle Always-Free note:** the VM is reclaimed if CPU **and** network stay under ~20% over 7
-> days. This relay is light, so keep a token workload (or a small cron) alive to avoid reclamation.
+Run it as a user of its own. `data/relay.json` and the `.p8` key should be readable by that user only; the relay writes the data file that way.
 
-## Maintenance / troubleshooting
+> **Oracle Always Free:** a machine whose CPU and network both stay under about 20% for 7 days is reclaimed. This relay is light, so keep a small job running beside it.
 
-- **Connection drops** — expected (~every 20 min). The client reconnects and resumes the same
-  `uaid` + channels automatically; endpoints survive, and Mozilla redelivers anything queued while
-  offline. Nothing to do.
-- **No notifications for a user** — check: the device is in `data/relay.json`; `/health` shows the
-  Mozilla connection; the phone actually called `registerWebPush` (the app logs the result). Instagram
-  can also silently stop delivering (it's unsanctioned) — have the app re-assert registration on open.
-- **Instagram rotates its VAPID key** — set `INSTAGRAM_VAPID_KEY` and re-pair devices.
-- **Rotating the APNs key** — drop in a new `.p8`, update `APNS_KEY_ID`, restart.
-- **Backups** — `data/relay.json` is the only state. It holds transport identifiers + APNs tokens,
-  **no** decryption keys and **no** message content.
+## Looking after it
 
-## Privacy & scope
+- **The connection drops** about every twenty minutes. That's expected: the relay reconnects with the same identity and channels, endpoints survive, and Mozilla delivers what arrived meanwhile.
+- **Mozilla answers with a new identity.** Rare, and the log says `new uaid`. Every endpoint is gone; the relay registers a new channel for each phone at once, and each phone picks up its new endpoint the next time its app pairs again (it does once a day, when it's opened) and gives it to Instagram.
+- **A phone gets no notifications.** Check that it's in `data/relay.json`, that `/health` shows the Mozilla connection, and that the app did register with Instagram (turn notifications off and on in its Settings). Instagram can also stop delivering without saying so.
+- **A phone is gone.** When Apple answers that a token no longer exists, the relay forgets the phone. The log says `[forget]`.
+- **Instagram changes its push key.** Set `INSTAGRAM_VAPID_KEY` and have the phones turn notifications off and on.
+- **A new push key from Apple.** Put the new `.p8` in place, update `APNS_KEY_ID`, restart.
+- **Backups.** `data/relay.json` is the only state: the Mozilla identity, and per phone an ID, a channel, an endpoint and an Apple token. No keys, no content. Losing it means every phone gets a new endpoint the next time its app pairs, and no notifications until then.
 
-This relay forwards ciphertext only; the decryption key never leaves the user's phone. It handles each
-user's **own** notifications, which they opt into from their own Instagram login. It is not a tool for
-reading others' data or acting on accounts without consent. See the "Legitimate use & scope" section
-of [`../docs/NOTIFICATIONS.md`](../docs/NOTIFICATIONS.md).
+## Privacy and scope
+
+The relay forwards ciphertext; the keys never leave the phone. It handles each person's own notifications, which they turned on from their own Instagram login, and logs nothing from a push but its size. It isn't a tool for reading other people's data or acting on accounts without consent. See "Legitimate use and scope" in [docs/NOTIFICATIONS.md](../docs/NOTIFICATIONS.md).
