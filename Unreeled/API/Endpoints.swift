@@ -326,8 +326,10 @@ extension InstagramAPI {
         return Page(items: messages.nodes, cursor: messages.nextCursor)
     }
 
-    func send(_ text: String, threadID threadFbid: String) async throws -> SentMessage {
-        let offlineID = Self.offlineThreadingID()
+    /// Sends a text message. `offlineID` is the message's own ID (`newOfflineID`): sending again
+    /// with the same one lets Instagram recognise the message rather than take it twice.
+    func send(_ text: String, threadID threadFbid: String, offlineID: String? = nil) async throws -> SentMessage {
+        let offlineID = offlineID ?? Self.newOfflineID()
         #if DEBUG
         NetworkRecorder.append(["time": Date().ISO8601Format(), "directSend": ["characters": text.count, "thread": threadFbid]])
         #endif
@@ -386,7 +388,7 @@ extension InstagramAPI {
     }
 
     /// The website's own ID for a message it sends: the time in milliseconds, shifted, plus random bits.
-    private static func offlineThreadingID() -> String {
+    nonisolated static func newOfflineID() -> String {
         String((UInt64(Date().timeIntervalSince1970 * 1000) << 22) | UInt64.random(in: 0..<(1 << 22)))
     }
 
@@ -402,17 +404,17 @@ extension InstagramAPI {
 
     /// Sends a photo (JPEG) or video (MP4) in a conversation: uploaded first, then sent, as the
     /// website's chat does.
-    func sendMedia(_ data: Data, mimeType: String, threadID threadFbid: String) async throws -> SentMessage {
+    func sendMedia(_ data: Data, mimeType: String, threadID threadFbid: String, offlineID: String? = nil) async throws -> SentMessage {
         #if DEBUG
         NetworkRecorder.append(["time": Date().ISO8601Format(), "directMediaSend": ["bytes": data.count, "mime": mimeType, "thread": threadFbid]])
         #endif
         let attachmentID = try await uploadForDirect(data, mimeType: mimeType, fileName: mimeType == "video/mp4" ? "video.mp4" : "image.jpg")
-        return try await sendAttachment(attachmentID, threadID: threadFbid)
+        return try await sendAttachment(attachmentID, threadID: threadFbid, offlineID: offlineID)
     }
 
     /// Sends a voice message the way the website's recorder does: Opus in an Ogg file named
     /// `audioclip-<time>-<length>.ogg`, uploaded with its waveform, then sent like a photo.
-    func sendVoice(pcm url: URL, threadID threadFbid: String) async throws -> SentMessage {
+    func sendVoice(pcm url: URL, threadID threadFbid: String, offlineID: String? = nil) async throws -> SentMessage {
         let encoded = try await Task.detached(priority: .userInitiated) { try OggOpus.encode(pcm: url) }.value
         let lengthMs = Int((encoded.duration * 1000).rounded())
         #if DEBUG
@@ -428,17 +430,17 @@ extension InstagramAPI {
             fileName: "audioclip-\(Int(Date().timeIntervalSince1970 * 1000))-\(lengthMs).ogg",
             fields: [("voice_clip", "true"), ("voice_clip_waveform_data", waveformJSON)]
         )
-        return try await sendAttachment(attachmentID, threadID: threadFbid)
+        return try await sendAttachment(attachmentID, threadID: threadFbid, offlineID: offlineID)
     }
 
-    private func sendAttachment(_ attachmentID: String, threadID threadFbid: String) async throws -> SentMessage {
+    private func sendAttachment(_ attachmentID: String, threadID threadFbid: String, offlineID: String?) async throws -> SentMessage {
         try await query(
             "IGDirectMediaSendMutation",
             [
                 "attachment_fbid": attachmentID,
                 "forwarded_from_thread_id": NSNull(),
                 "is_forwarded_from_own_message": NSNull(),
-                "offline_threading_id": Self.offlineThreadingID(),
+                "offline_threading_id": offlineID ?? Self.newOfflineID(),
                 "reply_to_message_id": NSNull(),
                 "thread_id": threadFbid,
             ],
@@ -583,7 +585,7 @@ extension InstagramAPI {
     /// Replies to a story item: a message to its owner with the story attached, sent the way the
     /// website's viewer sends it.
     func replyToStory(_ text: String, item: Media, ownerID: String, reelID: String) async throws -> SentMessage {
-        let offlineID = Self.offlineThreadingID()
+        let offlineID = Self.newOfflineID()
         #if DEBUG
         NetworkRecorder.append(["time": Date().ISO8601Format(), "storyReply": ["characters": text.count, "owner": ownerID]])
         #endif

@@ -34,7 +34,7 @@ struct ActivityView: View {
                     if model.isLoading {
                         ProgressView().frame(maxWidth: .infinity).padding(32)
                     } else if let error = model.error {
-                        ErrorRow(message: error) { Task { await model.load(api: session.api, force: true) } }
+                        ErrorRow(error: error) { Task { await model.load(api: session.api, force: true) } }
                     } else if model.hasLoaded {
                         Text("Nothing yet. When people like or comment on your posts, you'll see it here.")
                             .font(Theme.font(14))
@@ -54,6 +54,7 @@ struct ActivityView: View {
         // minute.
         .task { await model.load(api: session.api, force: false) }
         .onChange(of: tabSelections) { Task { await model.load(api: session.api, force: false) } }
+        .onReconnect { if model.error != nil { await model.load(api: session.api, force: true) } }
         .classicBar(title: "Activity")
     }
 }
@@ -107,7 +108,7 @@ final class ActivityModel {
     private(set) var requests: [User] = []
     private(set) var isLoading = false
     private(set) var hasLoaded = false
-    private(set) var error: String?
+    private(set) var error: ShownError?
     private var loadedAt: Date?
     private var log: ActivityLog?
 
@@ -129,7 +130,7 @@ final class ActivityModel {
             hasLoaded = true
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            self.error = ShownError(error)
         }
     }
 

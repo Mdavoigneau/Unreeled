@@ -3,27 +3,41 @@ import WebKit
 
 /// Talks to Instagram the way instagram.com does.
 ///
-/// Requests run as fetch() in a hidden web view showing a blank page on www.instagram.com,
-/// so they carry the website's cookies and the browser's own headers. The session never
-/// leaves WebKit's cookie store. Nearly all of the website's data comes from GraphQL queries
-/// it refers to by ID; Queries.json lists the ones the app uses, and Endpoints.swift calls them.
+/// Requests go out as the website's pages send them, with the website's cookies and the browser's
+/// headers (WebRequests); the cookies stay in WebKit's store on the phone. Nearly all of the
+/// website's data comes from GraphQL queries it refers to by ID; Queries.json lists the ones the
+/// app uses, and Endpoints.swift calls them.
 @MainActor
-final class InstagramAPI: NSObject {
+final class InstagramAPI {
     static let site = URL(string: "https://www.instagram.com/")!
+    static let appID = "1217981644879628"
 
     enum Failure: LocalizedError {
         case loginRequired
         case challenge
         case rateLimited
+        /// The phone has no connection.
+        case offline
+        /// The connection dropped or stalled, three times for reading.
+        case connection
         case http(status: Int, message: String?)
         case query(String)
         case unreadable(String)
+
+        init(_ error: URLError) {
+            switch error.code {
+            case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff, .callIsActive: self = .offline
+            default: self = .connection
+            }
+        }
 
         var errorDescription: String? {
             switch self {
             case .loginRequired: "Instagram wants you to log in again."
             case .challenge: "Instagram wants to confirm it's you. Open the website to continue."
             case .rateLimited: "Instagram asked to slow down. Try again in a few minutes."
+            case .offline: "You're offline."
+            case .connection: "Couldn't reach Instagram."
             case .http(let status, let message): message ?? "Instagram returned an error (\(status))."
             case .query(let message): message
             case .unreadable(let detail): "Couldn't read Instagram's response: \(detail)"
@@ -37,17 +51,29 @@ final class InstagramAPI: NSObject {
             default: false
             }
         }
+
+        /// The connection failed, not Instagram: it may work once the phone is back online.
+        var isConnection: Bool {
+            switch self {
+            case .offline, .connection: true
+            default: false
+            }
+        }
     }
 
-    let webView: WKWebView
-    /// The session values read from the website at the last launch, kept in the Keychain, so a
-    /// launch doesn't wait for the website's page before its first request.
-    private var siteSeed: [String: Any]?
+    let requests: WebRequests
     /// Numbers the mutations sent, like the website's client_mutation_id.
     var mutationCount = 0
-    private let dataStore: WKWebsiteDataStore
-    private var isReady = false
-    private var waiting: [CheckedContinuation<Void, Never>] = []
+    /// The session values the website's page provides, read from it at most every hour.
+    private var site: SiteValues?
+    private var siteLoading: Task<SiteValues, Error>?
+    /// Those read at the last launch, kept in the Keychain, so a launch doesn't wait for the
+    /// website's page before its first request.
+    private var savedSite: SiteValues?
+    /// Requests sent so far, as a page counts them in `__req`.
+    private var requestCount = 0
+    /// The website's claim for its REST calls, which it keeps for the page's lifetime.
+    private var claim = "0"
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -55,36 +81,155 @@ final class InstagramAPI: NSObject {
     }()
 
     init(dataStore: WKWebsiteDataStore) {
-        self.dataStore = dataStore
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = dataStore
-        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: configuration)
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
-        super.init()
-        webView.navigationDelegate = self
-        siteSeed = SecureStore.data(for: "site").flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
-        loadBlankPage()
+        requests = WebRequests(dataStore: dataStore)
+        savedSite = SecureStore.data(for: "site").flatMap { try? JSONDecoder().decode(SiteValues.self, from: $0) }
+        #if DEBUG
+        // -freshSite YES: read the session values from the website at launch, as after a day away.
+        if UserDefaults.standard.bool(forKey: "freshSite") { savedSite = nil }
+        #endif
     }
 
-    /// Stops whatever the hidden page is fetching, as leaving a page does: for a reply sent from
-    /// a notification that ran out of time in the background, which mustn't go out late.
+    /// Stops every request under way, as leaving a page stops its fetches: for a reply sent from a
+    /// notification that ran out of time in the background, which mustn't go out late.
     func abandonRequests() {
-        loadBlankPage()
+        requests.abandonAll()
     }
 
-    /// Forgets the session values, in the Keychain and in the hidden page: for logging out.
+    /// Forgets the session values, in the Keychain and here: for logging out.
     func reset() {
-        siteSeed = nil
+        site = nil
+        savedSite = nil
+        siteLoading = nil
+        requestCount = 0
+        claim = "0"
         SecureStore.set(nil, for: "site")
-        loadBlankPage()
+        requests.abandonAll()
+        requests.cookies.forget()
     }
 
-    /// Keeps values the hidden page just read from the website, for the next launch.
-    private func keepSite(from response: [String: Any]) {
-        guard let fresh = response["fresh"] as? [String: Any], (fresh["dtsg"] as? String)?.isEmpty == false else { return }
-        siteSeed = fresh
-        SecureStore.set(try? JSONSerialization.data(withJSONObject: fresh), for: "site")
+    // MARK: Session values
+
+    /// What the website embeds in its pages for its requests to use.
+    struct SiteValues: Codable {
+        /// When they were read, in milliseconds.
+        var time: Double
+        var dtsg = ""
+        var lsd = ""
+        var av = ""
+        var rev = ""
+        var hs = ""
+        var hsi = ""
+        var spinT = ""
+        var bloks = ""
+        /// Read since the app sent Direct search; missing from values saved before.
+        var dtsgAG: String?
+
+        var age: TimeInterval { Date.now.timeIntervalSince1970 - time / 1000 }
+    }
+
+    /// The session values: last launch's at first, while they're under a day old, renewed behind
+    /// once they're an hour old. `fresh` reads them from the website now, after a request failed.
+    private func siteValues(fresh: Bool) async throws -> SiteValues {
+        if site == nil, let savedSite, !savedSite.dtsg.isEmpty, savedSite.age < 86_400 { site = savedSite }
+        if !fresh, let site {
+            if site.age > 3600, siteLoading == nil { Task { try? await self.loadSite() } }
+            return site
+        }
+        return try await loadSite()
+    }
+
+    /// Reads the session values from the website's home page, as the website's own scripts find
+    /// them. Every request waiting for them shares one load of the page.
+    @discardableResult
+    private func loadSite() async throws -> SiteValues {
+        if let siteLoading { return try await siteLoading.value }
+        let task = Task { () throws -> SiteValues in
+            let response = try await self.requests.send("GET", "/", headers: [], purpose: .read)
+            return await Self.siteValues(in: response.data)
+        }
+        siteLoading = task
+        defer { siteLoading = nil }
+        let loaded = try await task.value
+        site = loaded
+        // Kept for the next launch only when the page was a logged-in one: the account's ID, not 0.
+        if !loaded.dtsg.isEmpty, !loaded.av.isEmpty, loaded.av != "0" {
+            savedSite = loaded
+            SecureStore.set(try? JSONEncoder().encode(loaded), for: "site")
+        }
+        #if DEBUG
+        // Which values the page provided, by length. Never the values.
+        let lengths: [String: Int] = [
+            "dtsg": loaded.dtsg.count, "lsd": loaded.lsd.count, "av": loaded.av.count, "rev": loaded.rev.count,
+            "hs": loaded.hs.count, "hsi": loaded.hsi.count, "spinT": loaded.spinT.count, "bloks": loaded.bloks.count,
+            "dtsgAG": loaded.dtsgAG?.count ?? 0,
+        ]
+        NetworkRecorder.append(["time": Date().ISO8601Format(), "siteValues": lengths])
+        #endif
+        return loaded
+    }
+
+    @concurrent
+    private nonisolated static func siteValues(in data: Data) async -> SiteValues {
+        let html = String(decoding: data, as: UTF8.self)
+        func find(_ patterns: NSRegularExpression...) -> String {
+            let range = NSRange(html.startIndex..., in: html)
+            for pattern in patterns {
+                if let match = pattern.firstMatch(in: html, range: range), let found = Range(match.range(at: 1), in: html) {
+                    return String(html[found])
+                }
+            }
+            return ""
+        }
+        return SiteValues(
+            time: (Date.now.timeIntervalSince1970 * 1000).rounded(),
+            dtsg: find(Patterns.dtsg, Patterns.dtsgOther),
+            lsd: find(Patterns.lsd, Patterns.lsdOther),
+            av: find(Patterns.actor, Patterns.viewer, Patterns.viewerOther),
+            rev: find(Patterns.revision, Patterns.spinR),
+            hs: find(Patterns.hasteSession),
+            hsi: find(Patterns.hsi),
+            spinT: find(Patterns.spinT),
+            bloks: find(Patterns.bloks),
+            dtsgAG: find(Patterns.asyncGetToken)
+        )
+    }
+
+    /// Where the values sit in the website's page.
+    private enum Patterns {
+        static let dtsg = regex(#""DTSGInitialData",\[\],\{"token":"([^"]+)""#)
+        static let dtsgOther = regex(#""dtsg":\{"token":"([^"]+)""#)
+        static let lsd = regex(#""LSD",\[\],\{"token":"([^"]+)""#)
+        static let lsdOther = regex(#""lsd":"([^"]+)""#)
+        static let actor = regex(#""actorID":"(\d+)""#)
+        static let viewer = regex(#""viewerId":"(\d+)""#)
+        static let viewerOther = regex(#""viewer_id":"(\d+)""#)
+        static let revision = regex(#""server_revision":(\d+)"#)
+        static let spinR = regex(#""__spin_r":(\d+)"#)
+        static let hasteSession = regex(#""haste_session":"([^"]+)""#)
+        static let hsi = regex(#""hsi":"(\d+)""#)
+        static let spinT = regex(#""__spin_t":(\d+)"#)
+        static let bloks = regex(#""versioningID":"([0-9a-f]+)""#)
+        static let asyncGetToken = regex(#""async_get_token":"([^"]+)""#)
+
+        private static func regex(_ pattern: String) -> NSRegularExpression {
+            try! NSRegularExpression(pattern: pattern)
+        }
+    }
+
+    /// The parameters every request of a page carries, as the website's scripts add them.
+    private func pageParameters(_ site: SiteValues, dpr: Int) -> [(String, String)] {
+        requestCount += 1
+        return [
+            ("__d", "www"), ("__user", "0"), ("__a", "1"), ("__req", String(requestCount, radix: 36)), ("__hs", site.hs),
+            ("dpr", String(dpr)), ("__ccg", "EXCELLENT"), ("__rev", site.rev), ("__hsi", site.hsi), ("__comet_req", "7"),
+            ("fb_dtsg", site.dtsg), ("jazoest", Self.checksum(site.dtsg)), ("lsd", site.lsd), ("__spin_r", site.rev),
+            ("__spin_b", "trunk"), ("__spin_t", site.spinT),
+        ]
+    }
+
+    /// The website's `jazoest`: a 2, then the sum of the token's character codes.
+    private nonisolated static func checksum(_ token: String) -> String {
+        "2" + String(token.utf16.reduce(0) { $0 + Int($1) })
     }
 
     // MARK: GraphQL
@@ -143,7 +288,7 @@ final class InstagramAPI: NSObject {
     /// The `data` of a query's response. When a query fails, tokens may have expired:
     /// this reads fresh ones from the website and tries once more. If it still fails, Instagram
     /// may have changed the query: when the project has a newer ID for it, this tries once more
-    /// with that.
+    /// with that. A failed connection was already tried again (WebRequests).
     func graphQL(_ name: String, _ variables: [String: Any]) async throws -> [String: Any] {
         do {
             return try await graphQLAttempt(name, variables, freshTokens: false)
@@ -159,139 +304,44 @@ final class InstagramAPI: NSObject {
         }
     }
 
+    /// Sends the query with the parameters and headers the website uses. The string "{viewer}" in
+    /// the variables becomes the account's ID as the website knows it.
     private func graphQLAttempt(_ name: String, _ variables: [String: Any], freshTokens: Bool) async throws -> [String: Any] {
         guard let query = WebQuery.all[name] else { throw Failure.unreadable("unknown query \(name)") }
         let variables = variables.merging(query.providers.mapValues(\.value)) { current, _ in current }
         let json = try JSONSerialization.data(withJSONObject: variables, options: [.withoutEscapingSlashes])
-
-        let run = {
-            try await self.webView.callAsyncJavaScript(
-                Self.graphQLScript,
-                arguments: [
-                    "name": name,
-                    "docID": query.docID,
-                    "path": query.path,
-                    "rootField": query.rootField ?? "",
-                    "variables": String(decoding: json, as: UTF8.self),
-                    "freshTokens": freshTokens,
-                    "seed": self.siteSeed ?? NSNull(),
-                ],
-                contentWorld: .defaultClient
-            )
+        let site = try await siteValues(fresh: freshTokens)
+        let identity = await BrowserIdentity.current()
+        let text = String(decoding: json, as: UTF8.self).replacingOccurrences(of: #""{viewer}""#, with: #""\#(site.av)""#)
+        let parameters = [("av", site.av)] + pageParameters(site, dpr: identity.pixelRatio) + [
+            ("fb_api_caller_class", "RelayModern"), ("fb_api_req_friendly_name", name), ("variables", text),
+            ("server_timestamps", "true"), ("doc_id", query.docID),
+        ]
+        var headers = [
+            ("Content-Type", "application/x-www-form-urlencoded"),
+            ("X-ASBD-ID", "359341"),
+            ("X-CSRFToken", await requests.cookies.value("csrftoken")),
+            ("X-FB-Friendly-Name", name),
+            ("X-FB-LSD", site.lsd),
+            ("X-IG-App-ID", Self.appID),
+            ("X-IG-Max-Touch-Points", String(identity.maxTouchPoints)),
+        ]
+        if let rootField = query.rootField, !rootField.isEmpty {
+            headers.append(("X-Root-Field-Name", rootField))
+            if !site.bloks.isEmpty { headers.append(("X-BLOKS-VERSION-ID", site.bloks)) }
         }
-        await waitUntilReady()
-        let result: Any?
-        do {
-            result = try await run()
-        } catch let error as WKError where error.code == .webContentProcessTerminated || error.code == .webViewInvalidated {
-            // iOS stopped the hidden page's process while the app was away, before this request
-            // could start: a new page, and once more.
-            loadBlankPage()
-            await waitUntilReady()
-            result = try await run()
-        }
-        guard let response = result as? [String: Any],
-              let status = (response["status"] as? NSNumber)?.intValue,
-              let body = response["body"] as? String
-        else { throw Failure.unreadable("no response to \(name)") }
-        keepSite(from: response)
-
-        #if DEBUG
-        if let found = response["found"] {
-            // Which session values the website's page provided, by length. Never the values.
-            NetworkRecorder.append(["time": Date().ISO8601Format(), "siteValues": found, "query": name, "status": status])
-        }
-        #endif
-        return try await Self.parsed(name, status: status, body: body)
+        let response = try await requests.send(
+            "POST", query.path, headers: headers,
+            body: Data(WebRequests.form(parameters.filter { !$0.1.isEmpty }).utf8),
+            purpose: name.contains("Mutation") ? .write : .read
+        )
+        return try await Self.parsed(name, status: response.status, data: response.data)
     }
 
     @concurrent
-    private nonisolated static func parsed(_ name: String, status: Int, body: String) async throws -> [String: Any] {
-        try data(of: name, status: status, body: body)
+    private nonisolated static func parsed(_ name: String, status: Int, data: Data) async throws -> [String: Any] {
+        try Self.data(of: name, status: status, body: String(decoding: data, as: UTF8.self))
     }
-
-    /// Runs first in the hidden page: the session values the website embeds in its pages. Every
-    /// request waiting for them shares one load of the page. Values saved at the last launch
-    /// (`seed`) are used at once and renewed behind once they're an hour old; `freshTokens` loads
-    /// them again now, after a request failed.
-    private static let siteScript = #"""
-        if (!window.unreeledLoadSite) {
-          window.unreeledLoadSite = () => window.unreeledSiteLoading ??= (async () => {
-            try {
-              const html = await (await fetch('/', { credentials: 'include' })).text();
-              const find = (...patterns) => {
-                for (const pattern of patterns) {
-                  const match = html.match(pattern);
-                  if (match) return match[1];
-                }
-                return '';
-              };
-              const loaded = {
-                time: Date.now(),
-                dtsg: find(/"DTSGInitialData",\[\],\{"token":"([^"]+)"/, /"dtsg":\{"token":"([^"]+)"/),
-                lsd: find(/"LSD",\[\],\{"token":"([^"]+)"/, /"lsd":"([^"]+)"/),
-                av: find(/"actorID":"(\d+)"/, /"viewerId":"(\d+)"/, /"viewer_id":"(\d+)"/),
-                rev: find(/"server_revision":(\d+)/, /"__spin_r":(\d+)/),
-                hs: find(/"haste_session":"([^"]+)"/),
-                hsi: find(/"hsi":"(\d+)"/),
-                spinT: find(/"__spin_t":(\d+)/),
-                bloks: find(/"versioningID":"([0-9a-f]+)"/),
-                dtsgAG: find(/"async_get_token":"([^"]+)"/),
-              };
-              window.unreeledSite = loaded;
-              window.unreeledSiteFresh = loaded;
-              return loaded;
-            } finally {
-              window.unreeledSiteLoading = null;
-            }
-          })();
-        }
-        let site = window.unreeledSite;
-        let found;
-        if (!site && seed && seed.dtsg && Date.now() - seed.time < 86400000) {
-          site = window.unreeledSite = seed;
-        }
-        if (freshTokens || !site) {
-          site = await window.unreeledLoadSite();
-          found = Object.fromEntries(Object.entries(site).filter(([key]) => key !== 'time').map(([key, value]) => [key, value.length]));
-        } else if (Date.now() - site.time > 3600000) {
-          window.unreeledLoadSite().catch(() => {});
-        }
-        const fresh = window.unreeledSiteFresh ?? null;
-        window.unreeledSiteFresh = null;
-        """#
-
-    /// Runs in the hidden page: sends the query with the parameters and headers the website uses.
-    /// The string "{viewer}" in the variables becomes the account's ID as the website knows it.
-    private static let graphQLScript = siteScript + #"""
-        variables = variables.replaceAll('"{viewer}"', JSON.stringify(site.av));
-        window.unreeledRequests = (window.unreeledRequests ?? 0) + 1;
-        const params = {
-          av: site.av, __d: 'www', __user: '0', __a: '1', __req: window.unreeledRequests.toString(36),
-          __hs: site.hs, dpr: String(Math.round(devicePixelRatio)), __ccg: 'EXCELLENT', __rev: site.rev,
-          __hsi: site.hsi, __comet_req: '7', fb_dtsg: site.dtsg,
-          jazoest: '2' + [...site.dtsg].reduce((sum, char) => sum + char.charCodeAt(0), 0),
-          lsd: site.lsd, __spin_r: site.rev, __spin_b: 'trunk', __spin_t: site.spinT,
-          fb_api_caller_class: 'RelayModern', fb_api_req_friendly_name: name, variables,
-          server_timestamps: 'true', doc_id: docID,
-        };
-        const headers = {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'X-ASBD-ID': '359341',
-          'X-CSRFToken': document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/)?.[1] ?? '',
-          'X-FB-Friendly-Name': name,
-          'X-FB-LSD': site.lsd,
-          'X-IG-App-ID': '1217981644879628',
-          'X-IG-Max-Touch-Points': String(navigator.maxTouchPoints),
-        };
-        if (rootField) {
-          headers['X-Root-Field-Name'] = rootField;
-          if (site.bloks) headers['X-BLOKS-VERSION-ID'] = site.bloks;
-        }
-        const body = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '')).toString();
-        const response = await fetch(path, { method: 'POST', headers, body, credentials: 'include' });
-        return { status: response.status, body: await response.text(), found, fresh };
-        """#
 
     /// The data of a GraphQL response, with streamed parts merged in.
     private nonisolated static func data(of name: String, status: Int, body: String) throws -> [String: Any] {
@@ -360,10 +410,7 @@ final class InstagramAPI: NSObject {
     /// returns the attachment ID to send it with.
     /// `fields` go in the form before the file, like the website's `voice_clip` ones.
     func uploadForDirect(_ data: Data, mimeType: String, fileName: String, fields: [(String, String)] = []) async throws -> String {
-        let (status, body) = try await upload(
-            target: "mercury", url: "/ajax/mercury/upload.php", data: data, mimeType: mimeType, fileName: fileName,
-            headers: [:], fields: fields
-        )
+        let (status, body) = try await mercuryUpload(data, mimeType: mimeType, fileName: fileName, fields: fields)
         let json = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any]
         let metadata = (json?["payload"] as? [String: Any])?["metadata"]
         let first = ((metadata as? [String: Any])?["0"] ?? (metadata as? [Any])?.first) as? [String: Any]
@@ -375,117 +422,61 @@ final class InstagramAPI: NSObject {
         throw Failure.http(status: status, message: message.map { "Upload failed: \($0)" } ?? "The upload didn't go through (\(status)).")
     }
 
+    /// Chat uploads go to /ajax/mercury/upload.php as a form with the file in "farr" and the
+    /// session values in the address, as the website sends them.
+    private func mercuryUpload(_ data: Data, mimeType: String, fileName: String, fields: [(String, String)]) async throws -> (status: Int, body: String) {
+        let site = try await siteValues(fresh: false)
+        let identity = await BrowserIdentity.current()
+        let query = WebRequests.form(pageParameters(site, dpr: identity.pixelRatio).filter { !$0.1.isEmpty })
+        let form = WebRequests.Multipart(
+            fields.map { .field($0.0, $0.1) } + [
+                .file(name: "farr", fileName: fileName, type: mimeType, data: data),
+                .field("upload_id", UUID().uuidString.lowercased()),
+            ]
+        )
+        let response = try await requests.send(
+            "POST", "/ajax/mercury/upload.php", query: query,
+            headers: [("Content-Type", form.contentType), ("X-ASBD-ID", "359341"), ("X-FB-LSD", site.lsd)],
+            body: form.body, purpose: .upload
+        )
+        return uploadResponse(response, target: "mercury", bytes: data.count, mimeType: mimeType)
+    }
+
     /// Uploads a story's photo or video to Instagram's upload service, as the website's story
-    /// camera does. `kind` is "igphoto" or "igvideo".
+    /// camera does: the bytes to i.instagram.com/rupload_…, with what they are in headers. `kind`
+    /// is "igphoto" or "igvideo".
     func ruploadForStory(kind: String, entityName: String, data: Data, mimeType: String, params: [String: Any]) async throws {
         let paramsJSON = try JSONSerialization.data(withJSONObject: params, options: [.withoutEscapingSlashes])
+        let site = try await siteValues(fresh: false)
+        let identity = await BrowserIdentity.current()
+        // From www to i.instagram.com: the website's headers there. No CSRF token (it only goes to
+        // the website's own /api/ paths), claim or device ID.
         var headers = [
-            "Offset": "0",
-            "X-Entity-Length": String(data.count),
-            "X-Entity-Name": entityName,
-            "X-Instagram-Rupload-Params": String(decoding: paramsJSON, as: UTF8.self),
+            ("Content-Type", mimeType),
+            ("X-ASBD-ID", "359341"),
+            ("X-IG-App-ID", Self.appID),
+            ("X-IG-Max-Touch-Points", String(identity.maxTouchPoints)),
+            ("X-Instagram-AJAX", site.rev),
+            ("Offset", "0"),
+            ("X-Entity-Length", String(data.count)),
+            ("X-Entity-Name", entityName),
+            ("X-Instagram-Rupload-Params", String(decoding: paramsJSON, as: UTF8.self)),
         ]
-        if kind == "igphoto" { headers["X-Entity-Type"] = mimeType }
-        let (status, body) = try await upload(
-            target: "rupload", url: "https://i.instagram.com/rupload_\(kind)/\(entityName)",
-            data: data, mimeType: mimeType, fileName: entityName, headers: headers, fields: []
-        )
+        if kind == "igphoto" { headers.append(("X-Entity-Type", mimeType)) }
+        guard let url = URL(string: "https://i.instagram.com/rupload_\(kind)/\(entityName)") else { throw URLError(.badURL) }
+        let response = try await requests.sendCrossOrigin("POST", url, headers: headers, body: data, purpose: .upload)
+        let (status, body) = uploadResponse(response, target: "rupload", bytes: data.count, mimeType: mimeType)
         try Self.check(status: status, data: Data(body.utf8))
     }
 
-    private func upload(
-        target: String, url: String, data: Data, mimeType: String, fileName: String, headers: [String: String],
-        fields: [(String, String)]
-    ) async throws -> (status: Int, body: String) {
-        await waitUntilReady()
-        let result: Any?
-        do {
-            result = try await runUpload(
-                target: target, url: url, data: data, mimeType: mimeType, fileName: fileName, headers: headers, fields: fields
-            )
-        } catch let error as NSError {
-            let message = error.userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
-            #if DEBUG
-            NetworkRecorder.append(["time": Date().ISO8601Format(), "uploadScriptError": message])
-            #endif
-            throw Failure.unreadable("the upload stopped: \(message)")
-        }
-        return try uploadResponse(result, target: target, data: data, mimeType: mimeType)
-    }
-
-    private func runUpload(
-        target: String, url: String, data: Data, mimeType: String, fileName: String, headers: [String: String],
-        fields: [(String, String)]
-    ) async throws -> Any? {
-        try await webView.callAsyncJavaScript(
-            Self.uploadScript,
-            arguments: [
-                "target": target, "url": url, "data": data.base64EncodedString(), "mime": mimeType, "fileName": fileName,
-                "uploadID": UUID().uuidString.lowercased(), "extraHeaders": headers, "freshTokens": false,
-                "seed": siteSeed ?? NSNull(),
-                "fields": fields.map { [$0.0, $0.1] },
-            ],
-            contentWorld: .defaultClient
-        )
-    }
-
-    private func uploadResponse(_ result: Any?, target: String, data: Data, mimeType: String) throws -> (status: Int, body: String) {
-        guard let response = result as? [String: Any],
-              let status = (response["status"] as? NSNumber)?.intValue,
-              var body = response["body"] as? String
-        else { throw Failure.unreadable("no response to the upload") }
-        keepSite(from: response)
+    private func uploadResponse(_ response: WebRequests.Response, target: String, bytes: Int, mimeType: String) -> (status: Int, body: String) {
+        var body = String(decoding: response.data, as: UTF8.self)
         if body.hasPrefix("for (;;);") { body.removeFirst("for (;;);".count) }
         #if DEBUG
-        NetworkRecorder.append(["time": Date().ISO8601Format(), "upload": target, "bytes": data.count, "mime": mimeType, "status": status])
+        NetworkRecorder.append(["time": Date().ISO8601Format(), "upload": target, "bytes": bytes, "mime": mimeType, "status": response.status])
         #endif
-        return (status, body)
+        return (response.status, body)
     }
-
-    /// Runs in the hidden page. Chat uploads go to /ajax/mercury/upload.php as a form with the
-    /// file in "farr" and the session values in the URL; story uploads post the bytes to
-    /// i.instagram.com/rupload_… with what they are in headers. Both as the website sends them.
-    private static let uploadScript = siteScript + #"""
-        const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-        const blob = new Blob([bytes], { type: mime });
-        let response;
-        if (target === 'mercury') {
-          window.unreeledRequests = (window.unreeledRequests ?? 0) + 1;
-          const params = {
-            __d: 'www', __user: '0', __a: '1', __req: window.unreeledRequests.toString(36), __hs: site.hs,
-            dpr: String(Math.round(devicePixelRatio)), __ccg: 'EXCELLENT', __rev: site.rev, __hsi: site.hsi,
-            __comet_req: '7', fb_dtsg: site.dtsg,
-            jazoest: '2' + [...site.dtsg].reduce((sum, char) => sum + char.charCodeAt(0), 0),
-            lsd: site.lsd, __spin_r: site.rev, __spin_b: 'trunk', __spin_t: site.spinT,
-          };
-          const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== '')).toString();
-          const form = new FormData();
-          for (const [name, value] of fields) form.append(name, value);
-          form.append('farr', blob, fileName);
-          form.append('upload_id', uploadID);
-          response = await fetch(url + '?' + query, {
-            method: 'POST', body: form, credentials: 'include',
-            headers: { 'X-ASBD-ID': '359341', 'X-FB-LSD': site.lsd },
-          });
-        } else {
-          // i.instagram.com, from www: the website's headers there. No CSRF token (it only goes
-          // to the website's own /api/ paths), claim or device ID.
-          try {
-            response = await fetch(url, {
-              method: 'POST', body: blob, credentials: 'include',
-              headers: Object.assign({
-                'X-ASBD-ID': '359341',
-                'X-IG-App-ID': '1217981644879628',
-                'X-IG-Max-Touch-Points': String(navigator.maxTouchPoints),
-                'X-Instagram-AJAX': site.rev,
-              }, extraHeaders),
-            });
-          } catch (error) {
-            return { status: 0, body: JSON.stringify({ message: 'upload blocked: ' + String(error) }) };
-          }
-        }
-        return { status: response.status, body: await response.text(), fresh };
-        """#
 
     // MARK: Comet GET
 
@@ -501,66 +492,41 @@ final class InstagramAPI: NSObject {
     }
 
     private func cometGETAttempt(_ path: String, _ parameters: [(String, String)], route: String, freshTokens: Bool) async throws -> Any {
-        await waitUntilReady()
-        let result = try await webView.callAsyncJavaScript(
-            Self.cometGETScript,
-            arguments: [
-                "path": path,
-                "parameters": parameters.map { [$0.0, $0.1] },
-                "route": route,
-                "freshTokens": freshTokens,
-                "seed": siteSeed ?? NSNull(),
+        var site = try await siteValues(fresh: freshTokens)
+        // Saved before the app read this value: the page once more.
+        if site.dtsgAG == nil { site = try await loadSite() }
+        let identity = await BrowserIdentity.current()
+        requestCount += 1
+        let token = site.dtsgAG ?? ""
+        let common = [
+            ("__d", "www"), ("__user", "0"), ("__a", "1"), ("__req", String(requestCount, radix: 36)),
+            ("__hs", site.hs), ("dpr", String(identity.pixelRatio)), ("__ccg", "EXCELLENT"),
+            ("__rev", site.rev), ("__hsi", site.hsi), ("__comet_req", "7"), ("fb_dtsg_ag", token),
+            ("jazoest", token.isEmpty ? "" : Self.checksum(token)),
+            ("__spin_r", site.rev), ("__spin_b", "trunk"), ("__spin_t", site.spinT), ("__crn", route),
+        ]
+        let response = try await requests.send(
+            "GET", path, query: WebRequests.form((parameters + common).filter { !$0.1.isEmpty }),
+            headers: [
+                ("X-ASBD-ID", "359341"),
+                ("X-FB-LSD", site.lsd),
+                ("X-IG-App-ID", Self.appID),
+                ("X-IG-D", "www"),
+                ("X-IG-Max-Touch-Points", String(identity.maxTouchPoints)),
             ],
-            contentWorld: .defaultClient
+            purpose: .read
         )
-        guard let response = result as? [String: Any],
-              let status = (response["status"] as? NSNumber)?.intValue,
-              var body = response["body"] as? String
-        else { throw Failure.unreadable("no response") }
-        keepSite(from: response)
+        var body = String(decoding: response.data, as: UTF8.self)
         if body.hasPrefix("for (;;);") { body.removeFirst("for (;;);".count) }
         let data = Data(body.utf8)
-        try Self.check(status: status, data: data)
+        try Self.check(status: response.status, data: data)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw Failure.http(status: status, message: nil)
+            throw Failure.http(status: response.status, message: nil)
         }
         if let summary = json["errorSummary"] as? String { throw Failure.query(summary) }
-        guard let payload = json["payload"], !(payload is NSNull) else { throw Failure.http(status: status, message: nil) }
+        guard let payload = json["payload"], !(payload is NSNull) else { throw Failure.http(status: response.status, message: nil) }
         return payload
     }
-
-    /// Runs in the hidden page, after the session values are read.
-    private static let cometGETScript = siteScript + #"""
-        let refreshed = null;
-        if (site.dtsgAG === undefined) {
-          // Saved before the app read this value: read the page once more.
-          site = await window.unreeledLoadSite();
-          refreshed = window.unreeledSiteFresh ?? null;
-          window.unreeledSiteFresh = null;
-        }
-        window.unreeledRequests = (window.unreeledRequests ?? 0) + 1;
-        const token = site.dtsgAG ?? '';
-        const common = [
-          ['__d', 'www'], ['__user', '0'], ['__a', '1'], ['__req', window.unreeledRequests.toString(36)],
-          ['__hs', site.hs], ['dpr', String(Math.round(devicePixelRatio))], ['__ccg', 'EXCELLENT'],
-          ['__rev', site.rev], ['__hsi', site.hsi], ['__comet_req', '7'], ['fb_dtsg_ag', token],
-          ['jazoest', token ? '2' + [...token].reduce((sum, char) => sum + char.charCodeAt(0), 0) : ''],
-          ['__spin_r', site.rev], ['__spin_b', 'trunk'], ['__spin_t', site.spinT], ['__crn', route],
-        ];
-        const query = new URLSearchParams([...parameters, ...common].filter(([, value]) => value !== '')).toString();
-        const response = await fetch(path + '?' + query, {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            'X-ASBD-ID': '359341',
-            'X-FB-LSD': site.lsd,
-            'X-IG-App-ID': '1217981644879628',
-            'X-IG-D': 'www',
-            'X-IG-Max-Touch-Points': String(navigator.maxTouchPoints),
-          },
-        });
-        return { status: response.status, body: await response.text(), fresh: refreshed ?? fresh };
-        """#
 
     // MARK: REST
 
@@ -573,40 +539,27 @@ final class InstagramAPI: NSObject {
         return data
     }
 
-    /// Status and body text, whatever they are.
+    /// Status and body text, whatever they are. Sent with the headers the website's REST calls
+    /// carry, and its claim, which the answers renew.
     func raw(_ method: String, _ path: String, form: [String: String] = [:]) async throws -> (status: Int, body: String) {
-        await waitUntilReady()
-        let result = try await webView.callAsyncJavaScript(
-            Self.restScript,
-            arguments: ["method": method, "path": path, "form": form],
-            contentWorld: .defaultClient
-        )
-        guard let response = result as? [String: Any],
-              let status = (response["status"] as? NSNumber)?.intValue,
-              var body = response["body"] as? String
-        else { throw Failure.unreadable("no response") }
-        if body.hasPrefix("for (;;);") { body.removeFirst("for (;;);".count) }
-        return (status, body)
-    }
-
-    private static let restScript = #"""
-        const headers = {
-          'X-ASBD-ID': '359341',
-          'X-CSRFToken': document.cookie.match(/(?:^|;\s*)csrftoken=([^;]*)/)?.[1] ?? '',
-          'X-IG-App-ID': '1217981644879628',
-          'X-IG-WWW-Claim': sessionStorage.getItem('www-claim-v2') ?? '0',
-          'X-Requested-With': 'XMLHttpRequest',
-        };
-        const init = { method, headers, credentials: 'include' };
-        if (method !== 'GET') {
-          headers['Content-Type'] = 'application/x-www-form-urlencoded';
-          init.body = new URLSearchParams(form).toString();
+        var headers = [
+            ("X-ASBD-ID", "359341"),
+            ("X-CSRFToken", await requests.cookies.value("csrftoken")),
+            ("X-IG-App-ID", Self.appID),
+            ("X-IG-WWW-Claim", claim),
+            ("X-Requested-With", "XMLHttpRequest"),
+        ]
+        var body: Data?
+        if method != "GET" {
+            headers.append(("Content-Type", "application/x-www-form-urlencoded"))
+            body = Data(WebRequests.form(form.sorted { $0.key < $1.key }).utf8)
         }
-        const response = await fetch(path, init);
-        const claim = response.headers.get('x-ig-set-www-claim');
-        if (claim) sessionStorage.setItem('www-claim-v2', claim);
-        return { status: response.status, body: await response.text() };
-        """#
+        let response = try await requests.send(method, path, headers: headers, body: body, purpose: method == "GET" ? .read : .write)
+        if let renewed = response.header("x-ig-set-www-claim"), !renewed.isEmpty { claim = renewed }
+        var text = String(decoding: response.data, as: UTF8.self)
+        if text.hasPrefix("for (;;);") { text.removeFirst("for (;;);".count) }
+        return (response.status, text)
+    }
 
     private static func check(status: Int, data: Data) throws {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -632,22 +585,17 @@ final class InstagramAPI: NSObject {
 
     /// The website's device ID cookie, which the feed query sends along.
     func deviceID() async -> String {
-        await cookie("ig_did")
+        await requests.cookies.value("ig_did")
     }
 
     /// The website's machine ID cookie, which a push registration sends along.
     func machineID() async -> String {
-        await cookie("mid")
+        await requests.cookies.value("mid")
     }
 
     /// The checksum of the CSRF token that the website adds to the forms it posts, as `jazoest`.
     func formChecksum() async -> String {
-        "2" + String(await cookie("csrftoken").utf16.reduce(0) { $0 + Int($1) })
-    }
-
-    private func cookie(_ name: String) async -> String {
-        let cookies = await dataStore.httpCookieStore.allCookies()
-        return cookies.first { $0.name == name && $0.domain.hasSuffix("instagram.com") }?.value ?? ""
+        Self.checksum(await requests.cookies.value("csrftoken"))
     }
 
     func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
@@ -668,31 +616,6 @@ final class InstagramAPI: NSObject {
             return "\(context.debugDescription) (\(path(context.codingPath)))"
         @unknown default: return String(describing: error)
         }
-    }
-
-    // MARK: Hidden page
-
-    private func loadBlankPage() {
-        isReady = false
-        webView.loadHTMLString("<!doctype html><meta charset=utf-8><title>Unreeled</title>", baseURL: Self.site)
-    }
-
-    private func waitUntilReady() async {
-        guard !isReady else { return }
-        await withCheckedContinuation { waiting.append($0) }
-    }
-}
-
-extension InstagramAPI: WKNavigationDelegate {
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        isReady = true
-        let waiting = self.waiting
-        self.waiting.removeAll()
-        waiting.forEach { $0.resume() }
-    }
-
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        loadBlankPage()
     }
 }
 
@@ -749,12 +672,4 @@ struct WebQuery: Decodable, Equatable {
             fatalError("Queries.json is invalid: \(error)")
         }
     }()
-}
-
-/// Puts the API's web view in the window, invisibly, where WebKit keeps it running.
-struct APIWebView: UIViewRepresentable {
-    let api: InstagramAPI
-
-    func makeUIView(context: Context) -> WKWebView { api.webView }
-    func updateUIView(_ webView: WKWebView, context: Context) {}
 }

@@ -564,7 +564,7 @@ struct StoryViewer: View {
     @State private var isDragging = false
     @State private var dragOffset: CGFloat = 0
     @State private var playing: PlayingVideo?
-    @State private var error: String?
+    @State private var error: ShownError?
     /// The current photo or video isn't on screen yet: the bar waits, and a spinner shows.
     @State private var isLoadingMedia = false
     @State private var reply = ""
@@ -641,6 +641,7 @@ struct StoryViewer: View {
         .statusBarHidden()
         .task(id: reelIndex) { await loadReel() }
         .task(id: playKey) { await play() }
+        .onReconnect { if error != nil { await loadReel() } }
         .onChange(of: isPaused) {
             if isPaused {
                 playing?.player.pause()
@@ -682,13 +683,7 @@ struct StoryViewer: View {
                 if isLoadingMedia {
                     ProgressView().tint(.white).controlSize(.large)
                 }
-            } else if let error {
-                Text(error)
-                    .font(Theme.font(14))
-                    .foregroundStyle(.white)
-                    .multilineTextAlignment(.center)
-                    .padding(32)
-            } else {
+            } else if error == nil {
                 ProgressView().tint(.white)
             }
             // Keeps the header readable on bright stories.
@@ -700,6 +695,10 @@ struct StoryViewer: View {
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(touches(width: width))
+            // Above the touches, so its button takes a tap; a tap anywhere else still moves on.
+            if item == nil, let error {
+                failure(error)
+            }
             VStack(spacing: 10) {
                 StoryBars(count: items.count, current: itemIndex, clock: clock, isRunning: !isPaused && !isLoadingMedia && item != nil)
                 header
@@ -708,6 +707,29 @@ struct StoryViewer: View {
             .padding(.horizontal, 10)
             .padding(.top, headerInset + 8)
         }
+    }
+
+    /// What went wrong loading this account's stories, and a way to try again. Back online, it
+    /// tries again by itself.
+    private func failure(_ error: ShownError) -> some View {
+        VStack(spacing: 16) {
+            Text(error.isConnection ? "Couldn't load these stories." : error.message)
+                .font(Theme.font(15))
+                .multilineTextAlignment(.center)
+            Button {
+                Task { await loadReel() }
+            } label: {
+                Text("Try Again")
+                    .font(Theme.font(15, .medium))
+                    .padding(.horizontal, 20)
+                    .frame(height: 36)
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.75), lineWidth: 1))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(.white)
+        .padding(32)
     }
 
     private var footer: some View {
@@ -758,10 +780,15 @@ struct StoryViewer: View {
         stories.reply(text, to: item, in: reel, api: session.api)
     }
 
+    /// Whose stories these are: from the tray until they've loaded, so the header is never blank.
+    private var owner: User? {
+        reel?.user ?? stories.tray.first { $0.id == presentation.reelIDs[reelIndex] }?.user
+    }
+
     private var header: some View {
         HStack(spacing: 8) {
-            Avatar(url: reel?.user?.avatarURL, size: 32)
-            Text(reel?.user?.username ?? "").font(Theme.font(14, .medium))
+            Avatar(url: owner?.avatarURL, size: 32)
+            Text(owner?.username ?? "").font(Theme.font(14, .medium))
             if let date = item?.date {
                 Text(shortAge(of: date)).font(Theme.font(14)).opacity(0.7)
             }
@@ -871,12 +898,14 @@ struct StoryViewer: View {
         }
         reel = nil
         do {
-            guard let loaded = try await stories.reel(at: reelIndex, of: presentation.reelIDs, api: session.api) else {
-                return nextReel()
-            }
+            let loaded = try await stories.reel(at: reelIndex, of: presentation.reelIDs, api: session.api)
+            // Moved on to another account meanwhile: this one is kept for later, not shown.
+            guard !Task.isCancelled else { return }
+            guard let loaded else { return nextReel() }
             show(loaded)
         } catch {
-            self.error = error.localizedDescription
+            guard !Task.isCancelled else { return }
+            self.error = ShownError(error)
         }
     }
 

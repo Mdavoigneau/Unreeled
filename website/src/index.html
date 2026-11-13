@@ -81,7 +81,7 @@
 
 <section aria-labelledby="how">
   <h2 id="how">How it works</h2>
-  <p>Instagram's website loads nearly everything through GraphQL queries that it sends by ID. Unreeled sends the same queries, with the same parameters and headers, from a hidden web view on www.instagram.com. That way each request carries the website's cookies and the browser's own headers, and the session never leaves your phone. The screens on top are native SwiftUI.</p>
+  <p>Instagram's website loads nearly everything through GraphQL queries that it sends by ID. Unreeled sends the same queries, with the same parameters and headers, as a page on www.instagram.com would, with the website's cookies, which never leave your phone. The screens on top are native SwiftUI.</p>
   <p>When Instagram changes a query, its ID changes and the screen that uses it stops loading. The fix is one edit to the project's list of queries. Installed apps pick up the new list within 6 hours, or right away when a query fails, with no new version needed.</p>
   <p><a href="https://github.com/Mdavoigneau/Unreeled/blob/main/docs/HOW-IT-WORKS.md">How it works, in detail</a></p>
 </section>

@@ -318,13 +318,13 @@ struct DirectThread: Decodable, Hashable, Identifiable {
     let threadId: String?
     let threadTitle: String?
     let isGroup: Bool?
-    let markedAsUnread: Bool?
-    let lastActivityTimestampMs: FlexibleID?
-    let users: Lossy<User>?
+    var markedAsUnread: Bool?
+    var lastActivityTimestampMs: FlexibleID?
+    var users: Lossy<User>?
     let viewer: DirectViewer?
     /// The latest messages, newest first.
     let slideMessages: Connection<DirectMessage>?
-    let slideReadReceipts: [ReadReceipt]?
+    var slideReadReceipts: [ReadReceipt]?
 
     var id: String { threadFbid ?? threadId ?? "" }
     var people: [User] { users?.elements ?? [] }
@@ -345,6 +345,25 @@ struct DirectThread: Decodable, Hashable, Identifiable {
         return sent > read
     }
 
+    /// The same conversation, read by you up to its newest message.
+    func readByViewer() -> DirectThread {
+        guard let me = viewerFbid, let newest = lastMessage?.timestampMs else { return self }
+        var read = self
+        read.markedAsUnread = false
+        read.slideReadReceipts = (slideReadReceipts ?? []).filter { $0.participantFbid != me }
+            + [ReadReceipt(participantFbid: me, watermarkTimestampMs: newest)]
+        return read
+    }
+
+    /// A newer copy of the conversation, from opening it, in place of this one from the inbox:
+    /// what it lacks is kept from this one.
+    func updated(with newer: DirectThread) -> DirectThread {
+        var updated = newer
+        if updated.people.isEmpty { updated.users = users }
+        let activity = [lastActivity, newer.lastActivity, newer.lastMessage?.date].compactMap { $0 }.max()
+        if let activity { updated.lastActivityTimestampMs = FlexibleID(String(Int64(activity.timeIntervalSince1970 * 1000))) }
+        return updated
+    }
 }
 
 struct DirectViewer: Decodable, Hashable {
@@ -508,6 +527,9 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
     let isReactionLog: Bool
     /// A line from Instagram rather than a message, like who reacted to what.
     let notice: String?
+    /// The ID the sender's app gave the message, which Instagram keeps with it: how a message
+    /// sent from here is recognised in Instagram's copy, even when its answer was lost.
+    var offlineThreadingId: String?
     /// Sent from here and shown before Instagram returns its own copy.
     var isPending = false
     /// The ID Instagram gave a message sent from here, once it has it.
@@ -520,7 +542,7 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
     var isPreview = false
 
     enum CodingKeys: String, CodingKey {
-        case rawID = "id", messageId, contentType, textBody, timestampMs, senderFbid, sender, content, reactions
+        case rawID = "id", messageId, contentType, textBody, timestampMs, senderFbid, sender, content, reactions, offlineThreadingId
     }
 
     private enum ContentKeys: String, CodingKey {
@@ -536,6 +558,7 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
         textBody = try? container.decodeIfPresent(String.self, forKey: .textBody)
         timestampMs = (try? container.decodeIfPresent(FlexibleID.self, forKey: .timestampMs))?.value
         senderFbid = (try? container.decodeIfPresent(FlexibleID.self, forKey: .senderFbid))?.value
+        offlineThreadingId = (try? container.decodeIfPresent(FlexibleID.self, forKey: .offlineThreadingId))?.value
         sender = try? container.decodeIfPresent(Sender.self, forKey: .sender)
         let content = try? container.nestedContainer(keyedBy: ContentKeys.self, forKey: .content)
         kind = try? content?.decodeIfPresent(String.self, forKey: .kind)
@@ -577,9 +600,10 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
         self.notice = notice.isEmpty ? nil : notice
     }
 
-    /// A message you're sending, until Instagram confirms it.
-    init(pending text: String, from senderFbid: String?) {
+    /// A message you're sending, until Instagram confirms it. `offlineID` is the one it's sent with.
+    init(pending text: String, from senderFbid: String?, offlineID: String? = nil) {
         rawID = "local-\(UUID().uuidString)"
+        offlineThreadingId = offlineID
         messageId = nil
         contentType = "TEXT"
         kind = nil
@@ -597,14 +621,14 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
     }
 
     /// A photo or video you're sending, until Instagram confirms it.
-    init(pending media: LocalMedia, from senderFbid: String?) {
-        self.init(pending: "", from: senderFbid)
+    init(pending media: LocalMedia, from senderFbid: String?, offlineID: String? = nil) {
+        self.init(pending: "", from: senderFbid, offlineID: offlineID)
         localMedia = media
     }
 
     /// A voice message you're sending, until Instagram confirms it.
-    init(pending audio: LocalAudio, from senderFbid: String?) {
-        self.init(pending: "", from: senderFbid)
+    init(pending audio: LocalAudio, from senderFbid: String?, offlineID: String? = nil) {
+        self.init(pending: "", from: senderFbid, offlineID: offlineID)
         localAudio = audio
     }
 
@@ -797,6 +821,10 @@ struct TopSearch: Decodable {
 /// Instagram sends IDs as numbers in some responses and as strings in others.
 struct FlexibleID: Codable, Hashable {
     let value: String
+
+    init(_ value: String) {
+        self.value = value
+    }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()

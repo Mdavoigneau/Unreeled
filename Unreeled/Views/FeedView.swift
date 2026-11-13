@@ -26,8 +26,12 @@ struct FeedView: View {
                 if feed.isLoading {
                     ProgressView().padding(32)
                 } else if let error = feed.error {
-                    ErrorRow(message: error) {
-                        Task { await refresh() }
+                    if feed.posts.isEmpty {
+                        ErrorRow(error: error) { Task { await retry() } }
+                    } else {
+                        RefreshNote(text: feed.failedLoadingMore ? "Couldn't load more posts." : "Couldn't refresh.", error: error) {
+                            Task { await retry() }
+                        }
                     }
                 }
             }
@@ -37,6 +41,8 @@ struct FeedView: View {
         .background(Color.white)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .refreshable { await refresh() }
+        // Back online after a load that failed: again, without being asked.
+        .onReconnect { if feed.error != nil { await retry() } }
         .task {
             feed.showsReels = showsReels
             // The saved feed shows at once, and Instagram's latest replaces it right away.
@@ -65,6 +71,15 @@ struct FeedView: View {
                     }
             }
             .accessibilityLabel(inbox.unreadCount > 0 ? "Messages, \(inbox.unreadCount) unread" : "Messages")
+        }
+    }
+
+    /// What failed, again: the next page when that was it, otherwise the whole feed.
+    private func retry() async {
+        if feed.failedLoadingMore {
+            await feed.loadMoreAgain(api: session.api)
+        } else {
+            await refresh()
         }
     }
 
@@ -174,7 +189,9 @@ private struct Wordmark: View {
 final class FeedModel {
     var posts: [Media] = []
     var isLoading = false
-    var error: String?
+    var error: ShownError?
+    /// The error was in loading the next page, not the feed's first.
+    private(set) var failedLoadingMore = false
     /// Reels from accounts you follow, as single videos. Off by default.
     var showsReels = false
     private var cursor: String?
@@ -270,7 +287,17 @@ final class FeedModel {
             if replacing { api.saveFeed(pages) }
             error = nil
         } catch {
-            if generation == self.generation { self.error = error.localizedDescription }
+            if generation == self.generation {
+                self.error = ShownError(error)
+                failedLoadingMore = !replacing
+            }
         }
+    }
+
+    /// The next page, after it failed to load.
+    func loadMoreAgain(api: InstagramAPI) async {
+        guard !isLoading else { return }
+        error = nil
+        await load(api: api, replacing: false)
     }
 }

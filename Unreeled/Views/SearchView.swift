@@ -5,7 +5,7 @@ struct SearchView: View {
     @Environment(Session.self) private var session
     @State private var query = ""
     @State private var results: [User] = []
-    @State private var error: String?
+    @State private var error: ShownError?
     /// The website starts a new search session each time you open search.
     @State private var sessionID = UUID().uuidString.lowercased()
     @FocusState private var isFocused: Bool
@@ -21,7 +21,7 @@ struct SearchView: View {
                     .buttonStyle(.plain)
                 }
                 if let error {
-                    ErrorRow(message: error)
+                    ErrorRow(error: error)
                 }
             }
         }
@@ -38,10 +38,14 @@ struct SearchView: View {
             try? await Task.sleep(for: .milliseconds(300))  // wait for typing to pause
             guard !Task.isCancelled else { return }
             do {
-                results = try await session.api.search(query, sessionID: sessionID)
+                let found = try await session.api.search(query, sessionID: sessionID)
+                // Typed on meanwhile: the newer search's results are the ones to show.
+                guard !Task.isCancelled else { return }
+                results = found
                 error = nil
             } catch {
-                self.error = error.localizedDescription
+                guard !Task.isCancelled else { return }
+                self.error = ShownError(error)
             }
         }
     }

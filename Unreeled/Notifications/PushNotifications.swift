@@ -366,8 +366,8 @@ extension PushNotifications {
         do {
             guard let threadID, Session.shared.isLoggedIn else { throw Failure.noConversation }
             let api = Session.shared.api
-            // An app woken for a notification gets seconds, not minutes, and in the background
-            // WebKit can hold the hidden page back.
+            // An app woken for a notification gets seconds, not minutes, and a weak connection
+            // can take longer than that.
             try await within(seconds: 20) {
                 #if DEBUG
                 if UserDefaults.standard.bool(forKey: "replyDryRun") {
@@ -386,8 +386,8 @@ extension PushNotifications {
             // The inbox and an open conversation look again.
             arrivals += 1
         } catch Failure.timedOut {
-            // Out of time: whatever the hidden page was sending stops here, rather than going out
-            // hours later when the app next runs.
+            // Out of time: whatever was being sent stops here, and isn't tried again later, rather
+            // than going out hours later when the app next runs.
             if UIApplication.shared.applicationState != .active { Session.shared.api.abandonRequests() }
             sayUnsent(text, threadID: threadID, conversation: conversation, id: notice, certain: false)
         } catch {

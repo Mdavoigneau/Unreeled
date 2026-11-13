@@ -42,7 +42,7 @@ struct InboxView: View {
             LazyVStack(spacing: 0) {
                 ForEach(model.threads) { thread in
                     NavigationLink(value: Route.thread(thread)) {
-                        ThreadRow(thread: thread)
+                        ThreadRow(thread: thread, sentLine: model.sentLines[thread.id])
                     }
                     .buttonStyle(.plain)
                     .onAppear { model.loadMore(near: thread, api: session.api) }
@@ -50,7 +50,13 @@ struct InboxView: View {
                 if model.isLoading {
                     ProgressView().padding(24)
                 } else if let error = model.error {
-                    ErrorRow(message: error) { Task { await model.load(api: session.api) } }
+                    if model.threads.isEmpty {
+                        ErrorRow(error: error) { Task { await model.load(api: session.api) } }
+                    } else {
+                        RefreshNote(text: "Couldn't load more conversations.", error: error) {
+                            Task { await model.load(api: session.api) }
+                        }
+                    }
                 }
             }
         }
@@ -68,7 +74,7 @@ struct InboxView: View {
                 if !match.conversations.isEmpty {
                     SearchSectionTitle(title: "Conversations")
                     ForEach(match.conversations) { thread in
-                        NavigationLink(value: Route.thread(thread)) { ThreadRow(thread: thread) }
+                        NavigationLink(value: Route.thread(thread)) { ThreadRow(thread: thread, sentLine: model.sentLines[thread.id]) }
                             .buttonStyle(.plain)
                     }
                 }
@@ -200,7 +206,17 @@ private struct PersonRow: View {
 final class InboxModel {
     var threads: [DirectThread] = []
     var isLoading = false
-    var error: String?
+    var error: ShownError?
+    /// Your latest message in a conversation, once Instagram confirmed it, for its row until a
+    /// copy of the conversation from Instagram has it: the row is right even when the inbox
+    /// couldn't load after you sent.
+    private(set) var sentLines: [String: SentLine] = [:]
+
+    struct SentLine: Equatable {
+        let preview: String
+        /// When Instagram has it, by its own clock.
+        let date: Date
+    }
     private var mailboxID: String?
     private var cursor: String?
     private var loadedAt: Date?
@@ -257,10 +273,53 @@ final class InboxModel {
             mailboxID = inbox.mailboxID
             loadedAt = .now
             error = nil
+            forgetSentLines()
             ImageCache.shared.warm(threads.compactMap { $0.people.first?.avatarURL })
             prefetch(api: api)
         } catch {
-            if threads.isEmpty { self.error = error.localizedDescription }
+            if threads.isEmpty { self.error = ShownError(error) }
+        }
+    }
+
+    /// A conversation on screen, as Instagram just sent it: its row shows the same messages, read.
+    func update(from conversation: DirectThread) {
+        guard let index = threads.firstIndex(where: { $0.id == conversation.id }) else { return }
+        let old = threads[index]
+        // Only a copy at least as new as the row's.
+        guard (conversation.lastMessage?.timestamp ?? 0) >= (old.lastMessage?.timestamp ?? 0) else { return }
+        place(old.updated(with: conversation).readByViewer(), at: index)
+        forgetSentLines()
+    }
+
+    /// You opened the conversation: it shows read at once, as in Instagram's app.
+    func showRead(_ threadID: String) {
+        guard let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+        threads[index] = threads[index].readByViewer()
+    }
+
+    /// Instagram confirmed a message you sent: its row says so, and moves up.
+    func showDelivered(_ preview: String, at date: Date, in threadID: String) {
+        guard let index = threads.firstIndex(where: { $0.id == threadID }) else { return }
+        sentLines[threadID] = SentLine(preview: preview, date: date)
+        place(threads[index].readByViewer(), at: index)
+    }
+
+    /// Moves a row to where its latest activity puts it, newest first.
+    private func place(_ thread: DirectThread, at index: Int) {
+        threads.remove(at: index)
+        let date = activity(of: thread)
+        let position = threads.firstIndex { activity(of: $0) < date } ?? threads.endIndex
+        threads.insert(thread, at: position)
+    }
+
+    private func activity(of thread: DirectThread) -> Date {
+        max(thread.lastActivity ?? .distantPast, sentLines[thread.id]?.date ?? .distantPast)
+    }
+
+    /// Lines Instagram's copies have caught up with: they show your message, or something newer.
+    private func forgetSentLines() {
+        sentLines = sentLines.filter { id, line in
+            (thread(withID: id)?.lastActivity ?? .distantPast) < line.date
         }
     }
 
@@ -352,7 +411,7 @@ final class InboxModel {
                 threads += page.items.filter { seen.insert($0.id).inserted }
                 self.cursor = page.cursor
             } catch {
-                self.error = error.localizedDescription
+                self.error = ShownError(error)
             }
         }
     }
@@ -360,7 +419,15 @@ final class InboxModel {
 
 private struct ThreadRow: View {
     let thread: DirectThread
+    /// What you just sent, when this copy of the conversation is older than it.
+    var sentLine: InboxModel.SentLine?
     @Environment(StoriesModel.self) private var stories
+
+    private var line: InboxModel.SentLine? {
+        sentLine.flatMap { (thread.lastActivity ?? .distantPast) < $0.date ? $0 : nil }
+    }
+
+    private var isUnread: Bool { line == nil && thread.isUnread }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -374,20 +441,20 @@ private struct ThreadRow: View {
             .frame(width: 60, height: 60)
             VStack(alignment: .leading, spacing: 3) {
                 Text(thread.title)
-                    .font(Theme.font(15, thread.isUnread ? .bold : .medium))
+                    .font(Theme.font(15, isUnread ? .bold : .medium))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(1)
                 HStack(spacing: 4) {
                     Text(preview).lineLimit(1)
-                    if let date = thread.lastActivity {
+                    if let date = line?.date ?? thread.lastActivity {
                         Text("· \(shortAge(of: date))").layoutPriority(1)
                     }
                 }
-                .font(Theme.font(14, thread.isUnread ? .medium : .regular))
-                .foregroundStyle(thread.isUnread ? Theme.ink : Theme.secondary)
+                .font(Theme.font(14, isUnread ? .medium : .regular))
+                .foregroundStyle(isUnread ? Theme.ink : Theme.secondary)
             }
             Spacer(minLength: 8)
-            if thread.isUnread {
+            if isUnread {
                 Circle().fill(Theme.accent).frame(width: 8, height: 8)
             }
         }
@@ -397,6 +464,7 @@ private struct ThreadRow: View {
     }
 
     private var preview: String {
+        if let line { return line.preview }
         guard let last = thread.lastMessage else { return "" }
         return last.preview(mine: last.senderFbid == thread.viewerFbid)
     }
@@ -503,6 +571,7 @@ struct ConversationView: View {
         .task {
             // Back in the inbox, its new messages and read state show.
             inbox.invalidate()
+            inbox.showRead(model.thread.id)
             await model.open(api: session.api)
             // New messages arrive through the website's live connection, which the app doesn't
             // have: look again every 15 seconds while the conversation is on screen.
@@ -517,6 +586,15 @@ struct ConversationView: View {
         .onChange(of: notifications.arrivals) {
             Task { await model.refresh(api: session.api) }
         }
+        // The inbox's row follows what's on screen, even if the inbox can't load meanwhile.
+        .onChange(of: model.thread) { inbox.update(from: model.thread) }
+        .onChange(of: model.lastDelivered) {
+            if let delivered = model.lastDelivered {
+                inbox.showDelivered(delivered.preview, at: delivered.date, in: model.thread.id)
+            }
+        }
+        // Back online: what came meanwhile, and the read receipt if it didn't go.
+        .onReconnect { await model.refresh(api: session.api) }
     }
 
     /// The sender's first name, for the view-once note.
@@ -601,7 +679,7 @@ private struct Composer: View {
                         switch await recorder.start() {
                         case .started: break
                         case .denied: micDenied = true
-                        case .failed: model.error = "Couldn't start recording."
+                        case .failed: model.error = ShownError(message: "Couldn't start recording.")
                         }
                     }
                 } label: {
@@ -674,11 +752,19 @@ final class ConversationModel {
     /// Pages of older messages added so far, and the message to keep on screen as one comes in.
     private(set) var olderPagesShown = 0
     private(set) var keepInView: String?
-    var error: String?
+    var error: ShownError?
+    /// Your latest message Instagram confirmed, for the inbox's row.
+    private(set) var lastDelivered: Delivered?
     private var hasCursor = false
     private var isLoadingOlder = false
     private var lastOlderPage = Date.distantPast
     private var markedRead: String?
+    private var markingRead: String?
+
+    struct Delivered: Equatable {
+        let preview: String
+        let date: Date
+    }
 
     init(thread: DirectThread) {
         // The inbox's copy has the newest read receipts. Its few messages are short copies: their
@@ -729,7 +815,7 @@ final class ConversationModel {
             error = nil
             await markReadIfNeeded(api: api)
         } catch {
-            self.error = error.localizedDescription
+            self.error = ShownError(error)
         }
     }
 
@@ -753,7 +839,7 @@ final class ConversationModel {
             waitingPage = try await api.olderMessages(threadID: thread.id, cursor: cursor)
             if !isScrolling { insertWaitingPage() }
         } catch {
-            self.error = error.localizedDescription
+            self.error = ShownError(error)
             isLoadingOlder = false
             lastOlderPage = .now
         }
@@ -792,10 +878,12 @@ final class ConversationModel {
     }
 
     /// Shows the message at once, sends it in the background, and marks it delivered when
-    /// Instagram has it.
-    func send(_ text: String, api: InstagramAPI) async {
-        await deliver(DirectMessage(pending: text, from: thread.viewerFbid), api: api) {
-            try await api.send(text, threadID: self.thread.id)
+    /// Instagram has it. `offlineID` is the message's own ID: a retry sends the same one, so
+    /// Instagram recognises a message whose first answer was lost.
+    func send(_ text: String, api: InstagramAPI, offlineID: String? = nil) async {
+        let offlineID = offlineID ?? InstagramAPI.newOfflineID()
+        await deliver(DirectMessage(pending: text, from: thread.viewerFbid, offlineID: offlineID), api: api) {
+            try await api.send(text, threadID: self.thread.id, offlineID: offlineID)
         }
     }
 
@@ -808,7 +896,7 @@ final class ConversationModel {
                     let media = try await MediaPreparation.prepare(item)
                     await send(media, api: api)
                 } catch {
-                    self.error = error.localizedDescription
+                    self.error = ShownError(error)
                 }
             }
         }
@@ -819,23 +907,27 @@ final class ConversationModel {
     private var preparedVoice: [String: VoiceRecorder.Recording] = [:]
 
     /// A voice message: shows at once, playable from the phone, while it's encoded, uploaded and sent.
-    func send(_ recording: VoiceRecorder.Recording, api: InstagramAPI) async {
+    func send(_ recording: VoiceRecorder.Recording, api: InstagramAPI, offlineID: String? = nil) async {
+        let offlineID = offlineID ?? InstagramAPI.newOfflineID()
         let pending = DirectMessage(
             pending: .init(url: recording.url, duration: recording.duration, levels: recording.levels),
-            from: thread.viewerFbid
+            from: thread.viewerFbid, offlineID: offlineID
         )
         preparedVoice[pending.id] = recording
         await deliver(pending, api: api) {
-            try await api.sendVoice(pcm: recording.url, threadID: self.thread.id)
+            try await api.sendVoice(pcm: recording.url, threadID: self.thread.id, offlineID: offlineID)
         }
         if messages.first(where: { $0.id == pending.id })?.failed != true { preparedVoice[pending.id] = nil }
     }
 
-    func send(_ media: PreparedMedia, api: InstagramAPI) async {
-        let pending = DirectMessage(pending: .init(image: media.preview, isVideo: media.isVideo), from: thread.viewerFbid)
+    func send(_ media: PreparedMedia, api: InstagramAPI, offlineID: String? = nil) async {
+        let offlineID = offlineID ?? InstagramAPI.newOfflineID()
+        let pending = DirectMessage(
+            pending: .init(image: media.preview, isVideo: media.isVideo), from: thread.viewerFbid, offlineID: offlineID
+        )
         preparedMedia[pending.id] = media
         await deliver(pending, api: api) {
-            try await api.sendMedia(media.data, mimeType: media.mimeType, threadID: self.thread.id)
+            try await api.sendMedia(media.data, mimeType: media.mimeType, threadID: self.thread.id, offlineID: offlineID)
         }
         if messages.first(where: { $0.id == pending.id })?.failed != true { preparedMedia[pending.id] = nil }
     }
@@ -847,6 +939,8 @@ final class ConversationModel {
             if let index = messages.firstIndex(where: { $0.id == pending.id }) {
                 messages[index].confirmedID = sent.messageId ?? ""
             }
+            let sentAt = sent.timestampMs.flatMap(Double.init).map { Date(timeIntervalSince1970: $0 / 1000) } ?? .now
+            lastDelivered = Delivered(preview: pending.preview(mine: true), date: sentAt)
             await refresh(api: api)
             // Like the website, mark the conversation read up to what you just sent.
             if let longID = thread.threadId, let messageID = sent.messageId, let timestamp = sent.timestampMs {
@@ -854,10 +948,11 @@ final class ConversationModel {
                 try? await api.markRead(threadID: longID, messageID: messageID, timestampMs: timestamp)
             }
         } catch {
+            // Still here unless Instagram's copy turned up with it meanwhile (see `merge`).
             if let index = messages.firstIndex(where: { $0.id == pending.id }) {
                 messages[index].failed = true
             }
-            self.error = error.localizedDescription
+            self.error = ShownError(error)
         }
     }
 
@@ -865,22 +960,28 @@ final class ConversationModel {
     func retry(_ message: DirectMessage, api: InstagramAPI) async {
         guard message.failed else { return }
         messages.removeAll { $0.id == message.id }
+        let offlineID = message.offlineThreadingId
         if let media = preparedMedia.removeValue(forKey: message.id) {
-            await send(media, api: api)
+            await send(media, api: api, offlineID: offlineID)
         } else if let recording = preparedVoice.removeValue(forKey: message.id) {
-            await send(recording, api: api)
+            await send(recording, api: api, offlineID: offlineID)
         } else if let text = message.textBody, !text.isEmpty {
-            await send(text, api: api)
+            await send(text, api: api, offlineID: offlineID)
         }
     }
 
     /// Something new from someone else: mark it read, as the website does while you look at it.
+    /// If that doesn't reach Instagram, the next look tries again.
     private func markReadIfNeeded(api: InstagramAPI) async {
         guard thread.isUnread, let longID = thread.threadId, let last = thread.lastMessage,
-              let messageID = last.messageId, let timestamp = last.timestampMs, markedRead != messageID
+              let messageID = last.messageId, let timestamp = last.timestampMs,
+              markedRead != messageID, markingRead != messageID
         else { return }
-        markedRead = messageID
-        try? await api.markRead(threadID: longID, messageID: messageID, timestampMs: timestamp)
+        markingRead = messageID
+        defer { markingRead = nil }
+        if (try? await api.markRead(threadID: longID, messageID: messageID, timestampMs: timestamp)) != nil {
+            markedRead = messageID
+        }
     }
 
     /// Adds the latest messages to the ones already shown, and drops pending ones Instagram now has.
@@ -889,9 +990,14 @@ final class ConversationModel {
         // The inbox's short copies go: Instagram's full ones replace them.
         for message in messages where !message.isPending && !message.isPreview { byID[message.id] = message }
         for message in latest { byID[message.id] = message }
-        // A sent message's own copy replaces it once Instagram returns it.
+        // A sent message's own copy replaces it once Instagram returns it, found by Instagram's ID
+        // for it or by the ID it was sent with: one whose answer was lost, shown as failed, too.
         let arrived = Set(latest.map(\.id))
-        let stillPending = messages.filter { $0.isPending && !arrived.contains($0.confirmedID ?? "") }
+        let arrivedOffline = Set(latest.compactMap(\.offlineThreadingId))
+        let stillPending = messages.filter { message in
+            message.isPending && !arrived.contains(message.confirmedID ?? "")
+                && message.offlineThreadingId.map { arrivedOffline.contains($0) } != true
+        }
         messages = byID.values.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) } + stillPending
         // Hearts on their way stay as you set them, whatever this copy says.
         if let me = thread.viewerFbid {
@@ -921,7 +1027,7 @@ final class ConversationModel {
                 try await api.react(emoji, to: messageID, threadID: thread.id, adding: adding)
             } catch {
                 setHeart(!adding, messageID: message.id, me: me)
-                self.error = error.localizedDescription
+                self.error = ShownError(error)
             }
             pendingHearts[message.id] = nil
         }

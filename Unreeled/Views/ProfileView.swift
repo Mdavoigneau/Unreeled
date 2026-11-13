@@ -42,8 +42,11 @@ struct ProfileView: View {
             if model.isLoading {
                 ProgressView().padding(32)
             } else if let error = model.error {
-                ErrorRow(message: error) {
-                    Task { await load() }
+                if model.profile == nil {
+                    ErrorRow(error: error) { Task { await load() } }
+                } else {
+                    // The saved profile stays on screen; only a quiet line says it's not the latest.
+                    RefreshNote(error: error) { Task { await load() } }
                 }
             } else if model.profile?.isLocked(for: session.userID) == true {
                 VStack(spacing: 8) {
@@ -62,6 +65,7 @@ struct ProfileView: View {
         .background(Color.white)
         .refreshable { await load() }
         .task { await loadIfNeeded() }
+        .onReconnect { if model.error != nil { await load() } }
         // Your own, again when you come back to its tab after a while.
         .onChange(of: tabSelections) { Task { await loadIfNeeded() } }
         .classicBar(showsBack: !isOwn) {
@@ -230,7 +234,7 @@ final class ProfileModel {
     var profile: Profile?
     var posts: [Media] = []
     var isLoading = false
-    var error: String?
+    var error: ShownError?
     private var cursor: String?
     /// When Instagram's copy last came.
     private var loadedAt: Date?
@@ -281,7 +285,7 @@ final class ProfileModel {
             loadedAt = .now
             error = nil
         } catch {
-            if profile?.isLocked(for: viewerID) != true { self.error = error.localizedDescription }
+            if profile?.isLocked(for: viewerID) != true { self.error = ShownError(error) }
         }
     }
 
@@ -298,7 +302,7 @@ final class ProfileModel {
                 posts += page.items.filter { seen.insert($0.id).inserted }
                 self.cursor = page.cursor
             } catch {
-                self.error = error.localizedDescription
+                self.error = ShownError(error)
             }
         }
     }

@@ -278,29 +278,3 @@ private struct PageDots: View {
         }
     }
 }
-
-/// An error with a way to retry, and to see what Instagram says on its website.
-struct ErrorRow: View {
-    let message: String
-    var retry: (() -> Void)?
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(message)
-                .font(Theme.font(13))
-                .foregroundStyle(Theme.secondary)
-                .multilineTextAlignment(.center)
-            HStack(spacing: 16) {
-                if let retry {
-                    Button("Try Again", action: retry)
-                }
-                NavigationLink("Open Website", value: Route.web(path: "/", title: "Instagram"))
-            }
-            .font(Theme.font(14, .medium))
-            .foregroundStyle(Theme.accent)
-            .buttonStyle(.plain)
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity)
-    }
-}

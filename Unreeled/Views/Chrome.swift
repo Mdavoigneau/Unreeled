@@ -44,8 +44,14 @@ extension View {
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
         let bar = ClassicBar(showsBack: showsBack, title: title(), trailing: trailing())
-        return safeAreaInset(edge: .top, spacing: 0) { bar }
-            .toolbar(.hidden, for: .navigationBar)
+        return safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                bar
+                OfflineStrip()
+            }
+            .animation(.snappy(duration: 0.25), value: Connectivity.shared.isOnline)
+        }
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     func classicBar(showsBack: Bool = false, title: String) -> some View {

@@ -49,12 +49,6 @@ struct RootView: View {
                 content
             }
         }
-        .background(alignment: .topLeading) {
-            // The API's web view has to be in the window to keep running.
-            APIWebView(api: session.api)
-                .frame(width: 1, height: 1)
-                .allowsHitTesting(false)
-        }
         .fullScreenCover(item: $stories.presented) { presentation in
             StoryViewer(presentation: presentation)
         }
@@ -216,6 +210,8 @@ struct MainView: View {
             // A notification while the app is open: the paper plane's count is out of date.
             Task { await inbox.load(api: session.api) }
         }
+        // Back online: the paper plane's count, and the list, from Instagram again.
+        .onReconnect { await inbox.load(api: session.api, force: false) }
         .onChange(of: visibleThread, initial: true) { notifications.visibleThread = visibleThread }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             isTyping = true

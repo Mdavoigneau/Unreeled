@@ -7,7 +7,7 @@ struct PostDetailView: View {
     @State private var comments: [Comment] = []
     @State private var cursor: String?
     @State private var isLoading = false
-    @State private var error: String?
+    @State private var error: ShownError?
 
     init(post: Media) {
         _post = State(initialValue: post)
@@ -24,7 +24,7 @@ struct PostDetailView: View {
                 if isLoading {
                     ProgressView().frame(maxWidth: .infinity).padding(24)
                 } else if let error {
-                    ErrorRow(message: error) { Task { await loadComments() } }
+                    ErrorRow(error: error) { Task { await loadComments() } }
                 } else if cursor != nil {
                     Button("Load more comments") { Task { await loadComments() } }
                         .font(Theme.font(14, .medium))
@@ -40,6 +40,7 @@ struct PostDetailView: View {
         .task {
             if comments.isEmpty, (post.commentCount ?? 0) > 0 { await loadComments() }
         }
+        .onReconnect { if error != nil { await loadComments() } }
     }
 
     private func loadComments() async {
@@ -52,7 +53,7 @@ struct PostDetailView: View {
             cursor = page.cursor
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            self.error = ShownError(error)
         }
     }
 }
@@ -62,7 +63,7 @@ struct PostLoaderView: View {
     let code: String
     @Environment(Session.self) private var session
     @State private var post: Media?
-    @State private var error: String?
+    @State private var error: ShownError?
 
     var body: some View {
         if let post {
@@ -70,7 +71,7 @@ struct PostLoaderView: View {
         } else {
             Group {
                 if let error {
-                    ErrorRow(message: error) { Task { await load() } }
+                    ErrorRow(error: error) { Task { await load() } }
                 } else {
                     ProgressView()
                 }
@@ -79,15 +80,16 @@ struct PostLoaderView: View {
             .background(Color.white)
             .classicBar(showsBack: true, title: "")
             .task { await load() }
+            .onReconnect { if error != nil { await load() } }
         }
     }
 
     private func load() async {
         do {
             post = try await session.api.post(code: code)
-            error = post == nil ? "This post isn't available." : nil
+            error = post == nil ? ShownError(message: "This post isn't available.") : nil
         } catch {
-            self.error = error.localizedDescription
+            self.error = ShownError(error)
         }
     }
 }

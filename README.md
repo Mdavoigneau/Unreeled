@@ -41,7 +41,7 @@ Unreeled collects nothing. You log in on Instagram's own page, and your account 
 
 ## How it works
 
-Instagram's website loads nearly everything through GraphQL queries that it sends by ID. Unreeled sends the same queries, with the same parameters and headers, from a hidden web view on www.instagram.com. That way each request carries the website's cookies and the browser's own headers, and the session never leaves your phone. The screens on top are native SwiftUI. More in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+Instagram's website loads nearly everything through GraphQL queries that it sends by ID. Unreeled sends the same queries, with the same parameters and headers, as a page on www.instagram.com would, with the website's cookies, which never leave your phone. The screens on top are native SwiftUI. More in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 When Instagram changes a query, its ID changes and the screen that uses it stops loading. The fix is one edit to [Queries.json](Unreeled/API/Queries.json). Installed apps pick up the new list from the project within 6 hours, or right away when a query fails, with no new version needed. See [docs/MAINTAINING.md](docs/MAINTAINING.md).
 
