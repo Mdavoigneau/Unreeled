@@ -158,21 +158,35 @@ struct ClassicTabBar: View {
 extension EnvironmentValues {
     /// Goes up each time the open tab's button is tapped while its first screen shows.
     @Entry var tabReselections = 0
+    /// Goes up each time you switch to the tab, so its first screen can bring what's out of date
+    /// up to date.
+    @Entry var tabSelections = 0
 }
 
 extension View {
     /// For a tab's first screen: back to the top when the tab's button is tapped again, and when
     /// it's already at the top, `refresh` if there is one (Home loads its feed again).
-    func scrollsToTopOnTabReselect(refresh: (() async -> Void)? = nil) -> some View {
-        modifier(ScrollsToTopOnTabReselect(refresh: refresh))
+    ///
+    /// With `refreshesOnReturn`, coming back to the app refreshes too: after a minute away if the
+    /// screen is at the top, and after ten minutes from the top, wherever it was.
+    func scrollsToTopOnTabReselect(refreshesOnReturn: Bool = false, refresh: (() async -> Void)? = nil) -> some View {
+        modifier(ScrollsToTopOnTabReselect(refreshesOnReturn: refreshesOnReturn, refresh: refresh))
     }
 }
 
 private struct ScrollsToTopOnTabReselect: ViewModifier {
+    var refreshesOnReturn: Bool
     var refresh: (() async -> Void)?
     @Environment(\.tabReselections) private var reselections
+    @Environment(\.scenePhase) private var scenePhase
     @State private var position = ScrollPosition(edge: .top)
     @State private var isAtTop = true
+    @State private var leftAt: Date?
+
+    /// Away this long, a screen at the top refreshes when the app comes back.
+    private static let refreshAtTopAfter: TimeInterval = 60
+    /// Away this long, it goes back to the top and refreshes, like a new start.
+    private static let startOverAfter: TimeInterval = 10 * 60
 
     func body(content: Content) -> some View {
         content
@@ -187,6 +201,25 @@ private struct ScrollsToTopOnTabReselect: ViewModifier {
                     Task { await refresh() }
                 } else {
                     withAnimation(.snappy(duration: 0.35)) { position.scrollTo(edge: .top) }
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard refreshesOnReturn, let refresh else { return }
+                switch phase {
+                case .background:
+                    if leftAt == nil { leftAt = .now }
+                case .active:
+                    guard let leftAt else { return }
+                    self.leftAt = nil
+                    let away = Date.now.timeIntervalSince(leftAt)
+                    if away >= Self.startOverAfter {
+                        position.scrollTo(edge: .top)
+                        Task { await refresh() }
+                    } else if away >= Self.refreshAtTopAfter, isAtTop {
+                        Task { await refresh() }
+                    }
+                default:
+                    break
                 }
             }
     }

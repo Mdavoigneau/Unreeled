@@ -6,6 +6,7 @@ import SwiftUI
 /// first, by day.
 struct ActivityView: View {
     @Environment(Session.self) private var session
+    @Environment(\.tabSelections) private var tabSelections
     @State private var model = ActivityModel()
 
     var body: some View {
@@ -49,9 +50,48 @@ struct ActivityView: View {
         .scrollsToTopOnTabReselect()
         .background(Color.white)
         .refreshable { await model.load(api: session.api, force: true) }
-        // Again when coming back to the tab's first screen, but not more than every half minute.
+        // Again when coming back to the tab or to its first screen, but not more than every half
+        // minute.
         .task { await model.load(api: session.api, force: false) }
+        .onChange(of: tabSelections) { Task { await model.load(api: session.api, force: false) } }
         .classicBar(title: "Activity")
+    }
+}
+
+/// The last 100 notifications and the follow requests, kept on the phone so Activity opens at
+/// once and keeps what Instagram stops sending (it sends the latest 25 or so). Only what the rows
+/// show is kept, mostly picture links: about 2.5 KB a notification, a quarter of a megabyte at
+/// most. Logging out deletes it with the rest.
+struct ActivityLog: Codable {
+    static let limit = 100
+    private static let key = "kept-activity"
+
+    /// Notification kinds that are Instagram talking, not people: "… has new followers" (40042),
+    /// suggested Threads posts (1379), and account notices like the Meta account one (32658).
+    private static let instagramPrompts: Set<Int> = [40042, 1379, 32658]
+
+    var items: [ActivityItem] = []
+    var requests: [User] = []
+
+    static func saved() -> ActivityLog? {
+        ResponseCache.shared.data(for: key).flatMap { try? InstagramAPI.decodeSaved(ActivityLog.self, from: $0) }
+    }
+
+    func save() {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        ResponseCache.shared.store(data, for: Self.key)
+    }
+
+    /// Instagram's latest, then what was kept from before the oldest of them: anything newer
+    /// that Instagram no longer sends was taken back. Without its own prompts, or ones with no text.
+    func adding(_ feed: ActivityFeed) -> ActivityLog {
+        let fresh = feed.items
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .filter { !Self.instagramPrompts.contains($0.storyType ?? -1) }
+        let oldest = fresh.compactMap(\.date).min() ?? .distantFuture
+        let earlier = items.filter { ($0.date ?? .distantPast) < oldest }
+        let all = (fresh + earlier).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        return ActivityLog(items: Array(all.prefix(Self.limit)), requests: feed.requests)
     }
 }
 
@@ -63,24 +103,28 @@ final class ActivityModel {
         let items: [ActivityItem]
     }
 
-    /// Notification kinds that are Instagram talking, not people: "… has new followers" (40042),
-    /// suggested Threads posts (1379), and account notices like the Meta account one (32658).
-    private static let instagramPrompts: Set<Int> = [40042, 1379, 32658]
-
     private(set) var items: [ActivityItem] = []
     private(set) var requests: [User] = []
     private(set) var isLoading = false
     private(set) var hasLoaded = false
     private(set) var error: String?
     private var loadedAt: Date?
+    private var log: ActivityLog?
 
     func load(api: InstagramAPI, force: Bool) async {
-        if !hasLoaded, items.isEmpty, let saved = api.cachedActivity() { show(saved) }
+        // The kept notifications at once; Instagram's latest join them when they come.
+        if log == nil, let saved = ActivityLog.saved() {
+            log = saved
+            show(saved)
+        }
         if !force, let loadedAt, Date.now.timeIntervalSince(loadedAt) < 30 { return }
         isLoading = items.isEmpty
         defer { isLoading = false }
         do {
-            show(try await api.activity())
+            let updated = (log ?? ActivityLog()).adding(try await api.activity())
+            updated.save()
+            log = updated
+            show(updated)
             loadedAt = .now
             hasLoaded = true
             error = nil
@@ -89,16 +133,11 @@ final class ActivityModel {
         }
     }
 
-    /// What people did, without Instagram's own prompts: ones with no text, and the kinds listed
-    /// above. Anything repeated shows once, the newest.
-    private func show(_ feed: ActivityFeed) {
+    /// Newest first. Anything repeated shows once, the newest.
+    private func show(_ log: ActivityLog) {
         var seen = Set<String>()
-        items = feed.items
-            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .filter { !Self.instagramPrompts.contains($0.storyType ?? -1) }
-            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
-            .filter { seen.insert($0.text).inserted }
-        requests = feed.requests
+        items = log.items.filter { seen.insert($0.text).inserted }
+        requests = log.requests
     }
 
     /// Today, Yesterday, This Week, This Month, Earlier: the ones that have something.

@@ -3,7 +3,7 @@ import UIKit
 // Instagram's JSON, decoded with .convertFromSnakeCase: `like_count` becomes `likeCount`.
 // Nearly everything is optional, so a field Instagram drops doesn't break a whole screen.
 
-struct User: Decodable, Hashable, Identifiable {
+struct User: Codable, Hashable, Identifiable {
     let pk: FlexibleID?
     let rawID: FlexibleID?
     let username: String
@@ -43,7 +43,7 @@ struct User: Decodable, Hashable, Identifiable {
     }
 }
 
-struct Friendship: Decodable, Hashable {
+struct Friendship: Codable, Hashable {
     let following: Bool?
 }
 
@@ -718,9 +718,9 @@ struct ActivityFeed: Decodable {
 }
 
 /// One notification: who did what, and on which post or story.
-struct ActivityItem: Decodable, Hashable, Identifiable {
+struct ActivityItem: Codable, Hashable, Identifiable {
     /// A name in the text, by its position in it (UTF-16).
-    struct Link: Decodable, Hashable {
+    struct Link: Codable, Hashable {
         let start: Int?
         let end: Int?
         let id: FlexibleID?
@@ -728,8 +728,8 @@ struct ActivityItem: Decodable, Hashable, Identifiable {
         let type: String?
     }
 
-    struct Thumbnail: Decodable, Hashable {
-        struct Image: Decodable, Hashable {
+    struct Thumbnail: Codable, Hashable {
+        struct Image: Codable, Hashable {
             let url: String?
         }
 
@@ -738,7 +738,7 @@ struct ActivityItem: Decodable, Hashable, Identifiable {
         let image: Image?
     }
 
-    struct Args: Decodable, Hashable {
+    struct Args: Codable, Hashable {
         let text: String?
         let links: Lossy<Link>?
         let media: Thumbnail?
@@ -795,7 +795,7 @@ struct TopSearch: Decodable {
 // MARK: - Helpers
 
 /// Instagram sends IDs as numbers in some responses and as strings in others.
-struct FlexibleID: Decodable, Hashable {
+struct FlexibleID: Codable, Hashable {
     let value: String
 
     init(from decoder: Decoder) throws {
@@ -805,6 +805,11 @@ struct FlexibleID: Decodable, Hashable {
         } else {
             value = String(try container.decode(Int64.self))
         }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(value)
     }
 }
 
@@ -827,6 +832,14 @@ struct Lossy<Element: Decodable>: Decodable {
 
     private struct Skip: Decodable {
         init(from decoder: Decoder) throws {}
+    }
+}
+
+/// Saved as a plain array, which decodes back the same way.
+extension Lossy: Encodable where Element: Encodable {
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.unkeyedContainer()
+        try container.encode(contentsOf: elements)
     }
 }
 

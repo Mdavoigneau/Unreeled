@@ -10,9 +10,18 @@ struct ProfileView: View {
 
     @Environment(Session.self) private var session
     @Environment(StoriesModel.self) private var stories
-    @State private var model = ProfileModel()
+    @Environment(\.tabSelections) private var tabSelections
+    @State private var model: ProfileModel
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 1), count: 3)
+
+    /// `model`: for your own profile, the one the app filled with the saved copy at launch.
+    init(id: String, username: String? = nil, isOwn: Bool = false, model: ProfileModel? = nil) {
+        self.id = id
+        self.username = username
+        self.isOwn = isOwn
+        _model = State(initialValue: model ?? ProfileModel())
+    }
 
     var body: some View {
         ScrollView {
@@ -52,9 +61,9 @@ struct ProfileView: View {
         .scrollsToTopOnTabReselect()
         .background(Color.white)
         .refreshable { await load() }
-        .task {
-            if model.profile == nil { await load() }
-        }
+        .task { await loadIfNeeded() }
+        // Your own, again when you come back to its tab after a while.
+        .onChange(of: tabSelections) { Task { await loadIfNeeded() } }
         .classicBar(showsBack: !isOwn) {
             Text(model.profile?.username ?? username ?? "").font(Theme.font(16, .medium))
         } trailing: {
@@ -70,7 +79,13 @@ struct ProfileView: View {
     }
 
     private func load() async {
-        await model.load(id: id, username: username, viewerID: session.userID, api: session.api)
+        await model.load(id: id, username: username, viewerID: session.userID, isOwn: isOwn, api: session.api)
+    }
+
+    /// Someone else's the first time; your own whenever Instagram's copy is a few minutes old.
+    private func loadIfNeeded() async {
+        guard !model.isLoading, isOwn ? model.isStale : model.profile == nil else { return }
+        await load()
     }
 }
 
@@ -183,10 +198,13 @@ private struct GridStrip: View {
 private struct GridThumbnail: View {
     let post: Media
 
+    /// The picture's size: a third of the screen's width, in pixels.
+    static let pixels: CGFloat = 400
+
     var body: some View {
         Color.clear
             .aspectRatio(1, contentMode: .fit)
-            .overlay { RemoteImage(post.imageURL(width: 400)) }
+            .overlay { RemoteImage(post.imageURL(width: Self.pixels)) }
             .clipped()
             .overlay(alignment: .topTrailing) {
                 if let symbol {
@@ -214,27 +232,53 @@ final class ProfileModel {
     var isLoading = false
     var error: String?
     private var cursor: String?
+    /// When Instagram's copy last came.
+    private var loadedAt: Date?
 
-    func load(id: String, username: String?, viewerID: String?, api: InstagramAPI) async {
+    /// Instagram's copy is more than five minutes old, or hasn't come since launch.
+    var isStale: Bool {
+        loadedAt.map { Date.now.timeIntervalSince($0) > 5 * 60 } ?? true
+    }
+
+    /// Your own profile as it was last time, read off the main thread, with the pictures of its
+    /// first posts decoded from the phone: the Profile tab opens complete. Nothing goes to Instagram.
+    func showSaved(userID: String?, api: InstagramAPI) async {
+        guard profile == nil, let saved = await api.keptProfile(), saved.profile.id == userID, profile == nil else { return }
+        profile = saved.profile
+        if let page = saved.posts { show(page) }
+        let pictures = [saved.profile.avatarURL] + posts.prefix(12).map { $0.imageURL(width: GridThumbnail.pixels) }
+        ImageCache.shared.warm(pictures.compactMap { $0 })
+    }
+
+    func load(id: String, username: String?, viewerID: String?, isOwn: Bool, api: InstagramAPI) async {
         // As it was last time, at once; Instagram's copy replaces it.
+        if profile == nil, isOwn { await showSaved(userID: viewerID, api: api) }
         if profile == nil, let saved = api.cachedProfile(id: id) {
             profile = saved
             if !saved.isLocked(for: viewerID), let page = api.cachedPosts(username: saved.username) { show(page) }
         }
+        // Header and posts at once, when the username is known: given, or your saved profile's.
+        let username = username ?? (isOwn ? profile?.username : nil)
         isLoading = true
         defer { isLoading = false }
         do {
             if let username {
-                // Header and posts at once.
-                async let profile = api.profile(id: id)
-                async let page = api.posts(username: username)
-                self.profile = try await profile
-                show(try await page)
-            } else {
-                let profile = try await api.profile(id: id)
+                async let fresh = api.profile(id: id, keep: isOwn)
+                async let page = api.posts(username: username, keep: isOwn)
+                let profile = try await fresh
                 self.profile = profile
-                if !profile.isLocked(for: viewerID) { show(try await api.posts(username: profile.username)) }
+                if profile.username == username {
+                    show(try await page)
+                } else if !profile.isLocked(for: viewerID) {
+                    // Your username changed since last time.
+                    show(try await api.posts(username: profile.username, keep: isOwn))
+                }
+            } else {
+                let profile = try await api.profile(id: id, keep: isOwn)
+                self.profile = profile
+                if !profile.isLocked(for: viewerID) { show(try await api.posts(username: profile.username, keep: isOwn)) }
             }
+            loadedAt = .now
             error = nil
         } catch {
             if profile?.isLocked(for: viewerID) != true { self.error = error.localizedDescription }
@@ -262,14 +306,5 @@ final class ProfileModel {
     private func show(_ page: Page<Media>) {
         posts = page.items
         cursor = page.cursor
-    }
-}
-
-/// Your own profile, with the gear that opens Settings.
-struct OwnProfileView: View {
-    @Environment(Session.self) private var session
-
-    var body: some View {
-        ProfileView(id: session.userID ?? "", isOwn: true)
     }
 }

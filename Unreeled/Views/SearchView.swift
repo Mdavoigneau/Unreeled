@@ -9,6 +9,7 @@ struct SearchView: View {
     /// The website starts a new search session each time you open search.
     @State private var sessionID = UUID().uuidString.lowercased()
     @FocusState private var isFocused: Bool
+    @Environment(\.tabReselections) private var reselections
 
     var body: some View {
         ScrollView {
@@ -25,6 +26,8 @@ struct SearchView: View {
             }
         }
         .scrollsToTopOnTabReselect()
+        // Search tapped again: the field, ready to type in.
+        .onChange(of: reselections) { isFocused = true }
         .scrollDismissesKeyboard(.immediately)
         .background(Color.white)
         .safeAreaInset(edge: .top, spacing: 0) { searchBar }

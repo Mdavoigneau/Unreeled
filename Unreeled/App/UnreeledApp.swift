@@ -4,7 +4,7 @@ import SwiftUI
 @main
 struct UnreeledApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var session = Session()
+    @State private var session = Session.shared
 
     init() {
         // Play video sound even when the phone is on silent, as Safari does. Off the main thread:
@@ -152,6 +152,10 @@ struct MainView: View {
     @State private var paths: [AppTab: [Route]] = [:]
     /// Taps on the open tab's button while its first screen shows, which take it back to the top.
     @State private var reselections: [AppTab: Int] = [:]
+    /// Switches to each tab, for the screens that refresh when you come back to them.
+    @State private var selections: [AppTab: Int] = [:]
+    /// Your profile, filled from the saved copy at launch so its tab opens complete.
+    @State private var ownProfile = ProfileModel()
     @State private var isTyping = false
 
     var body: some View {
@@ -161,6 +165,7 @@ struct MainView: View {
                     NavigationStack(path: path(for: tab)) { screen(for: tab).routes() }
                         .environment(\.navigate, NavigateAction(tab: tab) { route in paths[tab, default: []].append(route) })
                         .environment(\.tabReselections, reselections[tab] ?? 0)
+                        .environment(\.tabSelections, selections[tab] ?? 0)
                         .opacity(self.tab == tab ? 1 : 0)
                         .allowsHitTesting(self.tab == tab)
                         .accessibilityHidden(self.tab != tab)
@@ -181,7 +186,10 @@ struct MainView: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: showsTabBar)
-        .onChange(of: tab) { opened.insert(tab) }
+        .onChange(of: tab) {
+            opened.insert(tab)
+            selections[tab, default: 0] += 1
+        }
         .task {
             Self.cleanCaches()
             // Newer query IDs from the project, if Instagram changed any (at most every 6 hours).
@@ -189,6 +197,8 @@ struct MainView: View {
             // The saved inbox at once: the paper plane's count, and the latest conversations ready
             // to open. Instagram's a moment after the first screen.
             await inbox.showSaved(api: session.api)
+            // Your profile as it was, with its pictures, for when you open its tab.
+            await ownProfile.showSaved(userID: session.userID, api: session.api)
             try? await Task.sleep(for: .seconds(2))
             await inbox.load(api: session.api, force: false)
         }
@@ -242,7 +252,8 @@ struct MainView: View {
     private func open(_ opened: InstagramPush.Routing) {
         notifications.opened = nil
         guard opened.isDirect else {
-            tab = .activity
+            // Activity, brought up to date even when it's already the open tab.
+            if tab == .activity { selections[.activity, default: 0] += 1 } else { tab = .activity }
             paths[.activity] = []
             return
         }
@@ -268,7 +279,7 @@ struct MainView: View {
         case .home: FeedView()
         case .search: SearchView()
         case .activity: ActivityView()
-        case .profile: OwnProfileView()
+        case .profile: ProfileView(id: session.userID ?? "", isOwn: true, model: ownProfile)
         }
     }
 }

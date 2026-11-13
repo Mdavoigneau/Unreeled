@@ -79,10 +79,19 @@ struct InstagramPush {
         // One stack per conversation, and one for everything else of a kind.
         content.threadIdentifier = push.threadID ?? push.type
         content.userInfo[routingKey] = push.routing
+        // A message can be answered from the notification (the app registers the action).
+        if push.isDirect, push.threadID != nil { content.categoryIdentifier = messageCategory }
         // The encrypted copy has done its job.
         content.userInfo[envelopeKey] = nil
         return push
     }
+
+    // MARK: Replying
+
+    /// The kind of notification a message gets, which offers Reply.
+    static let messageCategory = "message"
+    /// Its Reply action, which sends what you type there to the conversation.
+    static let replyAction = "reply"
 
     // MARK: What the app needs when the notification is tapped
 

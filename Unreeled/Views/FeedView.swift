@@ -9,18 +9,12 @@ struct FeedView: View {
     @AppStorage("showsReels") private var showsReels = false
     @State private var feed = FeedModel()
     @State private var width: CGFloat = 0
-    /// Home tapped again at the top: the feed loads again, with a spinner above it.
-    @State private var isRefreshing = false
+    /// The refresh under way, which the wordmark shows. Asking again meanwhile waits for it.
+    @State private var refreshing: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                if isRefreshing {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .transition(.opacity)
-                }
                 StoriesTray()
                 ForEach($feed.posts) { $post in
                     PostCard(post: $post)
@@ -33,25 +27,27 @@ struct FeedView: View {
                     ProgressView().padding(32)
                 } else if let error = feed.error {
                     ErrorRow(message: error) {
-                        Task { await reload() }
+                        Task { await refresh() }
                     }
                 }
             }
         }
-        .scrollsToTopOnTabReselect { await refreshFromTab() }
+        // Home tapped at the top, and coming back to the app after a while: the latest posts.
+        .scrollsToTopOnTabReselect(refreshesOnReturn: true) { await refresh() }
         .background(Color.white)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-        .refreshable { await reload() }
+        .refreshable { await refresh() }
         .task {
             feed.showsReels = showsReels
-            if feed.posts.isEmpty { await reload() }
+            // The saved feed shows at once, and Instagram's latest replaces it right away.
+            if feed.posts.isEmpty { await refresh() }
         }
         .onChange(of: showsReels) {
             feed.showsReels = showsReels
             Task { await feed.reload(api: session.api) }
         }
         .classicBar {
-            Text("Unreeled").font(Theme.wordmark)
+            FillingWordmark(isLoading: refreshing != nil)
         } trailing: {
             NavigationLink(value: Route.inbox) {
                 Image(systemName: "paperplane")
@@ -72,17 +68,104 @@ struct FeedView: View {
         }
     }
 
-    private func reload() async {
-        async let posts: Void = feed.reload(api: session.api)
-        async let tray: Void = stories.loadTray(api: session.api)
-        _ = await (posts, tray)
+    /// Posts and stories from Instagram, the wordmark filling meanwhile. Once at a time.
+    private func refresh() async {
+        if let refreshing { return await refreshing.value }
+        let task = Task {
+            async let posts: Void = feed.reload(api: session.api)
+            async let tray: Void = stories.loadTray(api: session.api)
+            _ = await (posts, tray)
+        }
+        refreshing = task
+        await task.value
+        refreshing = nil
+    }
+}
+
+/// The wordmark, filling with ink from left to right while the feed loads: quickly at first,
+/// then slower and slower, and the rest at once when the posts are in.
+private struct FillingWordmark: View {
+    var isLoading: Bool
+    @State private var startedAt: Date?
+    @State private var finish: Finish?
+
+    private struct Finish {
+        let at: Date
+        let from: Double
     }
 
-    private func refreshFromTab() async {
-        guard !isRefreshing else { return }
-        withAnimation(.snappy(duration: 0.2)) { isRefreshing = true }
-        await reload()
-        withAnimation(.snappy(duration: 0.2)) { isRefreshing = false }
+    private static let finishDuration: TimeInterval = 0.35
+
+    var body: some View {
+        TimelineView(.animation(paused: startedAt == nil)) { context in
+            Wordmark(fill: fill(at: context.date))
+        }
+        .onChange(of: isLoading, initial: true) { _, isLoading in
+            if isLoading {
+                startedAt = .now
+                finish = nil
+            } else if let startedAt, finish == nil {
+                let now = Date.now
+                finish = Finish(at: now, from: Self.loadingFill(after: now.timeIntervalSince(startedAt)))
+                Task {
+                    try? await Task.sleep(for: .seconds(Self.finishDuration))
+                    // Unless a new load started meanwhile.
+                    if finish?.at == now {
+                        self.startedAt = nil
+                        finish = nil
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Unreeled")
+        .accessibilityValue(isLoading ? "Loading" : "")
+    }
+
+    private func fill(at date: Date) -> Double {
+        guard let startedAt else { return 1 }
+        guard let finish else { return Self.loadingFill(after: date.timeIntervalSince(startedAt)) }
+        let progress = min(1, max(0, date.timeIntervalSince(finish.at) / Self.finishDuration))
+        return finish.from + (1 - finish.from) * (1 - pow(1 - progress, 3))
+    }
+
+    /// Never quite full while loading: nearly half after a second, 80% after three.
+    private static func loadingFill(after seconds: TimeInterval) -> Double {
+        0.92 * (1 - exp(-max(0, seconds) / 1.5))
+    }
+}
+
+/// The wordmark in light grey, with ink over it as far as `fill` (0 to 1), edged softly.
+private struct Wordmark: View {
+    let fill: Double
+    private let edge: CGFloat = 16
+
+    var body: some View {
+        text
+            .foregroundStyle(Theme.hairline)
+            .overlay {
+                text
+                    .foregroundStyle(Theme.ink)
+                    .mask(alignment: .leading) {
+                        GeometryReader { proxy in
+                            let reach = fill * (proxy.size.width + edge)
+                            HStack(spacing: 0) {
+                                Rectangle().frame(width: max(0, reach - edge))
+                                LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
+                                    .frame(width: edge)
+                            }
+                            .offset(x: min(0, reach - edge))
+                        }
+                    }
+            }
+    }
+
+    /// With room around it for the script's flourishes, which reach past the text's own frame.
+    private var text: some View {
+        Text("Unreeled")
+            .font(Theme.wordmark)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
     }
 }
 
@@ -100,6 +183,8 @@ final class FeedModel {
     private var furthestSeen = 0
     /// Posts the last page added, so a page of only reels doesn't keep loading more on its own.
     private var lastPageAdded = 0
+    /// Goes up with each reload, so a page asked for before it doesn't land in the new feed.
+    private var generation = 0
 
     /// How many posts before the end the next page starts loading: about six screens.
     private static let lookahead = 8
@@ -109,6 +194,7 @@ final class FeedModel {
     }
 
     func reload(api: InstagramAPI) async {
+        generation += 1
         // The feed as it was last time, at once; Instagram's replaces it when it arrives.
         if posts.isEmpty {
             let saved = await api.cachedFeed().filter(belongs)
@@ -146,8 +232,9 @@ final class FeedModel {
     }
 
     private func load(api: InstagramAPI, replacing: Bool) async {
+        let generation = generation
         isLoading = true
-        defer { isLoading = false }
+        defer { if generation == self.generation { isLoading = false } }
         do {
             var fresh: [Media] = []
             var pages: [Data] = []
@@ -155,8 +242,11 @@ final class FeedModel {
             var shownEarly = 0
             // Most of a page can be reels. Keep going (a little) until there are a few posts to show.
             repeat {
-                let data = try await api.timelineData(cursor: cursor)
-                let page = try await api.timelinePage(from: data, first: cursor == nil)
+                let next = cursor
+                let data = try await api.timelineData(cursor: next)
+                let page = try await api.timelinePage(from: data, first: next == nil)
+                // A reload started meanwhile: this page belongs to the feed it replaces.
+                guard generation == self.generation else { return }
                 pages.append(data)
                 cursor = page.cursor
                 reachedEnd = page.cursor == nil
@@ -180,7 +270,7 @@ final class FeedModel {
             if replacing { api.saveFeed(pages) }
             error = nil
         } catch {
-            self.error = error.localizedDescription
+            if generation == self.generation { self.error = error.localizedDescription }
         }
     }
 }

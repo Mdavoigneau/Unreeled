@@ -142,6 +142,26 @@ message = plain[2 + big-endian-u16(plain[0..2]) ...]        # after the padding
 
 The standard `aes128gcm` encoding (RFC 8188 with RFC 8291) is read too, in case Instagram moves to it. The message is JSON: `type` (`direct_v2_text`, `direct_v2_media_share`, …), `message` (the notification's text), `t` (the conversation's name), `ppu` (the sender's picture), `n` (the message's ID) and `params`, where `t_id` is the conversation's ID.
 
+## Replying
+
+A message's notification offers Reply, which sends what you type to the conversation without opening the app.
+
+- **The action.** The extension gives a decrypted `direct_v2_*` push with a conversation ID the category `message` ([InstagramPush.swift](../Shared/InstagramPush.swift)). The app registers that category at every launch, with one `UNTextInputNotificationAction` and no options, as Signal and Telegram do: no unlock is asked for, so it works from the lock screen ("Reply with Message" in iOS's lock screen settings governs that). Apple says the iPhone's notifications can be answered from a Mac that shows them; the action most likely runs on the iPhone, as it does for a Watch, so the app needs nothing more for it.
+- **Sending.** iOS wakes the app in the background and hands the text to the notification delegate, which the app delegate sets before launch ends ([PushNotifications.swift](../Unreeled/Notifications/PushNotifications.swift)). SwiftUI may not create any view on such a launch, so the reply goes through `Session.shared`, whose API exists from the start, with the same `IGDirectTextSendMutation` as the composer. A background task keeps the app running meanwhile.
+- **The time limit.** Apple doesn't document how long an app woken for a notification gets (its engineers have said about 10 seconds, a background task about 30), and WebKit can hold back a page that isn't on screen. A reply Instagram hasn't confirmed within 20 seconds counts as not sent: the hidden page is reloaded, which stops the request rather than letting it go out hours later, and a notification says the reply may not have been sent. One Instagram refuses gets a notification that it wasn't sent. Both quote the reply, offer Reply again, and open the conversation when tapped.
+- **A page process iOS stopped.** While the app is suspended, iOS can end WebKit's process for the hidden page. A request that finds it gone loads a new page and tries once more, which helps any first request after a long absence, and a reply most.
+- **Tried in the simulator,** without sending anything: iOS has the category (`message: reply`), and a reply sent as the app leaves the screen went through the hidden page in about a second, also with the page's process killed just before. **Not tried yet:** a reply from a cold launch on an iPhone, from the lock screen, and from a Mac. Whether WebKit lets the hidden page send from the background after hours of suspension on a real phone is the open question. If it doesn't, the fallback would be a native request with the saved session values, which would take the session out of WebKit, against how the rest of the app works.
+
+**Testing in the simulator, without sending anything.** Scripted touches can't press a notification there, so a Debug build has a stand-in. Set two values in the app's own settings, by the path of its container so the app reads them (a plain `defaults write <bundle ID>` lands elsewhere):
+
+```bash
+APP=$(xcrun simctl get_app_container booted <bundle ID> data)
+xcrun simctl spawn booted defaults write "$APP/Library/Preferences/<bundle ID>" replyDryRun -bool YES
+xcrun simctl spawn booted defaults write "$APP/Library/Preferences/<bundle ID>" replyTest -bool YES
+```
+
+With both, each time the app leaves the screen it replies to a stand-in conversation the way Reply does, but sends nothing: a read-only request (Activity) goes the same way instead. `Library/Caches/network-log.jsonl` shows `notificationCategories` at launch, then `replyDryRun` and `replyDryRunDone`. Delete both values afterwards. A stand-in message notification, `xcrun simctl push booted <file>` with `"aps": {"alert": {…}, "category": "message"}` and `"unreeled": {"type": "direct_v2_text", "thread": "dry-run-thread"}`, shows how it looks.
+
 ## Legitimate use and scope
 
 This feature gives people their **own** Instagram notifications on their **own** phone, without Instagram's app. It is built to be defensible and must stay that way:

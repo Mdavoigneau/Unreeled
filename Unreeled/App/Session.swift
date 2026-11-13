@@ -5,6 +5,10 @@ import WebKit
 @MainActor
 @Observable
 final class Session {
+    /// The app's one session, which a reply sent from a notification uses too: iOS can wake the
+    /// app for it in the background, before any screen exists.
+    static let shared = Session()
+
     enum State: Equatable {
         case unknown
         case loggedOut

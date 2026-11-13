@@ -76,10 +76,12 @@ extension InstagramAPI {
         }.value
     }
 
-    func profile(id: String) async throws -> Profile {
+    /// A profile's header. `keep` is for your own: its saved copy is kept apart from the other
+    /// screens', so visiting profiles never pushes it out (see ResponseCache).
+    func profile(id: String, keep: Bool = false) async throws -> Profile {
         let data = try await queryData("PolarisProfilePageContentQuery", ["enable_integrity_filters": true, "id": id], at: ["user"])
         let profile = try await decoded(Profile.self, from: data)
-        ResponseCache.shared.store(data, for: "profile-\(id)")
+        ResponseCache.shared.store(data, for: keep ? Self.keptProfileKey : "profile-\(id)")
         return profile
     }
 
@@ -88,8 +90,24 @@ extension InstagramAPI {
         ResponseCache.shared.data(for: "profile-\(id)").flatMap { try? decode(Profile.self, from: $0) }
     }
 
-    /// A profile's posts, newest first.
-    func posts(username: String, cursor: String? = nil) async throws -> Page<Media> {
+    private nonisolated static let keptProfileKey = "kept-profile"
+    private nonisolated static let keptPostsKey = "kept-posts"
+
+    /// Your own profile and first posts as they were last loaded, read off the main thread.
+    func keptProfile() async -> (profile: Profile, posts: Page<Media>?)? {
+        await Task.detached(priority: .userInitiated) { () -> (profile: Profile, posts: Page<Media>?)? in
+            guard let data = ResponseCache.shared.data(for: Self.keptProfileKey),
+                  let profile = try? InstagramAPI.decodeSaved(Profile.self, from: data)
+            else { return nil }
+            let posts = ResponseCache.shared.data(for: Self.keptPostsKey)
+                .flatMap { try? InstagramAPI.decodeSaved(Connection<Media>.self, from: $0) }
+                .map { Page(items: $0.nodes, cursor: $0.nextCursor) }
+            return (profile, posts)
+        }.value
+    }
+
+    /// A profile's posts, newest first. With `keep`, your own: see `profile(id:keep:)`.
+    func posts(username: String, cursor: String? = nil, keep: Bool = false) async throws -> Page<Media> {
         let options: [String: Any] = [
             "count": 12,
             "include_reel_media_seen_timestamp": true,
@@ -111,7 +129,7 @@ extension InstagramAPI {
                 at: ["xdt_api__v1__feed__user_timeline_graphql_connection"]
             )
             posts = try await decoded(Connection<Media>.self, from: data)
-            ResponseCache.shared.store(data, for: "posts-\(username)")
+            ResponseCache.shared.store(data, for: keep ? Self.keptPostsKey : "posts-\(username)")
         }
         return Page(items: posts.nodes, cursor: posts.nextCursor)
     }
@@ -509,12 +527,7 @@ extension InstagramAPI {
     // MARK: Activity
 
     /// Notifications about you, newest first, and the follow requests waiting for you. Reading
-    /// them marks nothing seen, as on the website.
-    /// Activity as it was last loaded.
-    func cachedActivity() -> ActivityFeed? {
-        ResponseCache.shared.data(for: "activity").flatMap { try? decode(ActivityFeed.self, from: $0) }
-    }
-
+    /// them marks nothing seen, as on the website. What's kept of them is in `ActivityLog`.
     func activity() async throws -> ActivityFeed {
         let data = try await queryData(
             "PolarisActivityFeedStoriesViewQuery",
@@ -522,7 +535,6 @@ extension InstagramAPI {
             at: []
         )
         let feed = try await decoded(ActivityFeed.self, from: data)
-        ResponseCache.shared.store(data, for: "activity")
         #if DEBUG
         // Kinds of notification only (type, destination, whether there's a post), to route taps.
         let kinds = Set(feed.items.map {

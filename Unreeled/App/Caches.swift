@@ -5,7 +5,8 @@ import Security
 /// Instagram's responses kept on the phone, so screens show at once and refresh behind. It cleans
 /// itself: anything unused for two weeks goes, and past 100 entries or 40 MB the least recently
 /// used go first. Conversations are kept apart, so visiting profiles never pushes them out: the
-/// 60 you opened last, for a month. Logging out empties it.
+/// 60 you opened last, for a month. So are your own profile and your activity (keys starting
+/// with `kept-`), a few hundred kilobytes, which stay until you log out. Logging out empties it.
 final class ResponseCache: @unchecked Sendable {
     static let shared = ResponseCache()
 
@@ -50,7 +51,8 @@ final class ResponseCache: @unchecked Sendable {
     func clean() {
         let folder = folder
         queue.async {
-            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: CacheFolder.keys)) ?? []
+            let all = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: CacheFolder.keys)) ?? []
+            let files = all.filter { !$0.lastPathComponent.hasPrefix("kept-") }
             let isConversation = { (file: URL) in file.lastPathComponent.hasPrefix("thread-") }
             CacheFolder.prune(files.filter(isConversation), maxAge: Self.conversationMaxAge, maxEntries: Self.maxConversations)
             CacheFolder.prune(files.filter { !isConversation($0) }, maxAge: Self.maxAge, maxEntries: Self.maxEntries, maxBytes: Self.maxBytes)

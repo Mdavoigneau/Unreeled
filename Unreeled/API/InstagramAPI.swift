@@ -67,6 +67,12 @@ final class InstagramAPI: NSObject {
         loadBlankPage()
     }
 
+    /// Stops whatever the hidden page is fetching, as leaving a page does: for a reply sent from
+    /// a notification that ran out of time in the background, which mustn't go out late.
+    func abandonRequests() {
+        loadBlankPage()
+    }
+
     /// Forgets the session values, in the Keychain and in the hidden page: for logging out.
     func reset() {
         siteSeed = nil
@@ -158,20 +164,32 @@ final class InstagramAPI: NSObject {
         let variables = variables.merging(query.providers.mapValues(\.value)) { current, _ in current }
         let json = try JSONSerialization.data(withJSONObject: variables, options: [.withoutEscapingSlashes])
 
+        let run = {
+            try await self.webView.callAsyncJavaScript(
+                Self.graphQLScript,
+                arguments: [
+                    "name": name,
+                    "docID": query.docID,
+                    "path": query.path,
+                    "rootField": query.rootField ?? "",
+                    "variables": String(decoding: json, as: UTF8.self),
+                    "freshTokens": freshTokens,
+                    "seed": self.siteSeed ?? NSNull(),
+                ],
+                contentWorld: .defaultClient
+            )
+        }
         await waitUntilReady()
-        let result = try await webView.callAsyncJavaScript(
-            Self.graphQLScript,
-            arguments: [
-                "name": name,
-                "docID": query.docID,
-                "path": query.path,
-                "rootField": query.rootField ?? "",
-                "variables": String(decoding: json, as: UTF8.self),
-                "freshTokens": freshTokens,
-                "seed": siteSeed ?? NSNull(),
-            ],
-            contentWorld: .defaultClient
-        )
+        let result: Any?
+        do {
+            result = try await run()
+        } catch let error as WKError where error.code == .webContentProcessTerminated || error.code == .webViewInvalidated {
+            // iOS stopped the hidden page's process while the app was away, before this request
+            // could start: a new page, and once more.
+            loadBlankPage()
+            await waitUntilReady()
+            result = try await run()
+        }
         guard let response = result as? [String: Any],
               let status = (response["status"] as? NSNumber)?.intValue,
               let body = response["body"] as? String

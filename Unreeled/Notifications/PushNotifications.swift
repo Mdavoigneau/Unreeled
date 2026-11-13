@@ -254,6 +254,10 @@ final class PushNotifications: NSObject {
 
     enum Failure: Error {
         case noAppleToken
+        /// A reply with no conversation to go to, or no login to send it from.
+        case noConversation
+        /// A reply Instagram hadn't confirmed in time.
+        case timedOut
     }
 
     private static func describe(_ error: Error) -> String {
@@ -304,18 +308,182 @@ extension PushNotifications: UNUserNotificationCenterDelegate {
         }
     }
 
-    /// You tapped a notification.
+    /// You tapped a notification, or answered a message with Reply.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let routing = InstagramPush.Routing(userInfo: response.notification.request.content.userInfo)
+        let content = response.notification.request.content
+        let routing = InstagramPush.Routing(userInfo: content.userInfo)
         let isTap = response.actionIdentifier == UNNotificationDefaultActionIdentifier
+        let reply = response.actionIdentifier == InstagramPush.replyAction ? (response as? UNTextInputNotificationResponse)?.userText : nil
+        let conversation = content.title
         Task { @MainActor in
             if isTap { opened = routing }
+            if let reply { await send(reply: reply, threadID: routing?.threadID, conversation: conversation) }
             completionHandler()
         }
+    }
+}
+
+// MARK: - Replying from a notification
+
+extension PushNotifications {
+    /// What a message's notification offers when you press it, or open it on a Mac that shows
+    /// the iPhone's notifications: Reply, which sends what you type without opening the app.
+    static let categories: Set<UNNotificationCategory> = [
+        UNNotificationCategory(
+            identifier: InstagramPush.messageCategory,
+            actions: [
+                UNTextInputNotificationAction(
+                    identifier: InstagramPush.replyAction,
+                    title: "Reply",
+                    options: [],
+                    icon: UNNotificationActionIcon(systemImageName: "arrowshape.turn.up.left"),
+                    textInputButtonTitle: "Send",
+                    textInputPlaceholder: "Message…"
+                ),
+            ],
+            intentIdentifiers: [],
+            options: []
+        ),
+    ]
+
+    /// Sends a reply typed in a notification. iOS may have woken the app in the background for
+    /// it: it keeps running until Instagram has the message. When the reply doesn't go, a
+    /// notification says so, with Reply again, and a tap opens the conversation.
+    func send(reply: String, threadID: String?, conversation: String) async {
+        let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        let notice = "unsent-\(UUID().uuidString)"
+        let time = BackgroundTime("Reply") { [weak self] in
+            // iOS stops the app before Instagram answered: the request stops too, as below.
+            Session.shared.api.abandonRequests()
+            self?.sayUnsent(text, threadID: threadID, conversation: conversation, id: notice, certain: false)
+        }
+        defer { time.end() }
+        do {
+            guard let threadID, Session.shared.isLoggedIn else { throw Failure.noConversation }
+            let api = Session.shared.api
+            // An app woken for a notification gets seconds, not minutes, and in the background
+            // WebKit can hold the hidden page back.
+            try await within(seconds: 20) {
+                #if DEBUG
+                if UserDefaults.standard.bool(forKey: "replyDryRun") {
+                    // Debug builds with replyDryRun set send nothing: a request that only reads
+                    // goes the same way instead, to try replying without writing to an account.
+                    NetworkRecorder.append(["time": Date().ISO8601Format(), "replyDryRun": ["characters": text.count, "thread": threadID]])
+                    _ = try await api.activity()
+                    NetworkRecorder.append(["time": Date().ISO8601Format(), "replyDryRunDone": true])
+                    return
+                }
+                #endif
+                _ = try await api.send(text, threadID: threadID)
+            }
+            // In case the slower notice above showed meanwhile.
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notice])
+            // The inbox and an open conversation look again.
+            arrivals += 1
+        } catch Failure.timedOut {
+            // Out of time: whatever the hidden page was sending stops here, rather than going out
+            // hours later when the app next runs.
+            if UIApplication.shared.applicationState != .active { Session.shared.api.abandonRequests() }
+            sayUnsent(text, threadID: threadID, conversation: conversation, id: notice, certain: false)
+        } catch {
+            sayUnsent(text, threadID: threadID, conversation: conversation, id: notice, certain: true)
+        }
+    }
+
+    /// `work`, unless it takes longer than `seconds`: then `Failure.timedOut`, and `work` is
+    /// left to finish unwatched.
+    private func within(seconds: Double, _ work: @escaping @MainActor () async throws -> Void) async throws {
+        let outcome = Outcome()
+        try await withCheckedThrowingContinuation { continuation in
+            outcome.continuation = continuation
+            Task { @MainActor in
+                do {
+                    try await work()
+                    outcome.settle(.success(()))
+                } catch {
+                    outcome.settle(.failure(error))
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(seconds))
+                outcome.settle(.failure(Failure.timedOut))
+            }
+        }
+    }
+
+    #if DEBUG
+    /// Debug builds with both `replyTest` and `replyDryRun` set in the app's defaults reply to a
+    /// stand-in conversation each time the app goes to the background, as a notification's Reply
+    /// would: iOS's own Reply can't be pressed from a script in the simulator. The dry run means
+    /// nothing is sent. Also logs the notification categories iOS has for the app.
+    func startReplyTest() {
+        Task {
+            let categories = await UNUserNotificationCenter.current().notificationCategories()
+            let described = categories.map { "\($0.identifier): \($0.actions.map(\.identifier).joined(separator: ","))" }
+            NetworkRecorder.append(["time": Date().ISO8601Format(), "notificationCategories": described])
+        }
+        let defaults = UserDefaults.standard
+        guard defaults.bool(forKey: "replyTest"), defaults.bool(forKey: "replyDryRun") else { return }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                _ = Task { await PushNotifications.shared.send(reply: "Dry run", threadID: "dry-run-thread", conversation: "Test conversation") }
+            }
+        }
+    }
+    #endif
+
+    /// A notification about a reply that didn't go, which offers Reply again.
+    private func sayUnsent(_ text: String, threadID: String?, conversation: String, id: String, certain: Bool) {
+        let content = UNMutableNotificationContent()
+        content.title = conversation
+        content.body = certain
+            ? "Your reply wasn't sent: “\(text)”. Reply again, or open the conversation."
+            : "Your reply may not have been sent: “\(text)”. Open the conversation to check."
+        if let threadID {
+            content.threadIdentifier = threadID
+            content.userInfo[InstagramPush.routingKey] = ["type": "direct_v2_text", "thread": threadID]
+            content.categoryIdentifier = InstagramPush.messageCategory
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+    }
+}
+
+/// Whichever of a reply's send and its time limit finishes first.
+@MainActor
+private final class Outcome {
+    var continuation: CheckedContinuation<Void, Error>?
+
+    func settle(_ result: Result<Void, Error>) {
+        continuation?.resume(with: result)
+        continuation = nil
+    }
+}
+
+/// Keeps the app running in the background until `end()`. If iOS needs it to stop first,
+/// `expired` runs.
+@MainActor
+private final class BackgroundTime {
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    init(_ name: String, expired: @escaping @MainActor () -> Void) {
+        id = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            // iOS calls this on the main thread.
+            MainActor.assumeIsolated {
+                expired()
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }
 
@@ -326,8 +494,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        // Before launch ends, so a tap that opened the app is heard.
+        // Before launch ends, so a tap that opened the app is heard, and a reply that woke it.
         UNUserNotificationCenter.current().delegate = PushNotifications.shared
+        UNUserNotificationCenter.current().setNotificationCategories(PushNotifications.categories)
+        #if DEBUG
+        PushNotifications.shared.startReplyTest()
+        #endif
         return true
     }
 
