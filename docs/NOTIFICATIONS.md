@@ -2,7 +2,7 @@
 
 How Unreeled shows Instagram's notifications (messages, likes, follows) on the iPhone while the app is closed, without Instagram's app.
 
-**Where it stands (13 November 2026).** The relay, the app's side and the notification extension are built. Everything up to Apple's push service is tested: a sender's push travels through Mozilla's real push service and the relay, and comes out decrypted on the phone's side. The relay exists as a Node program and as a Cloudflare Worker; the Worker is deployed at `relay.unreeled.app` as a dry run, without Apple's key. What's left needs the Apple Developer Program: the relay's push key, and with it the first run on an iPhone. See [What's left](#whats-left).
+**Where it stands (13 November 2026).** The relay, the app's side and the notification extension are built, and the whole route has run for real: Instagram's notifications reached an iPhone through Mozilla's push service, the relay and Apple's, and showed there decrypted. The relay exists as a Node program and as a Cloudflare Worker; the Worker is deployed at `relay.unreeled.app`, live, with Apple's push key. What's left is to see how it holds over days. See [What's left](#whats-left).
 
 It's off unless you turn it on, and a build only offers it when it was made with a relay (see [Building with notifications](#building-with-notifications)).
 
@@ -58,9 +58,13 @@ Turning them off, or logging out, deletes the keys and tells the relay to forget
 
 - The relay as a Cloudflare Worker, in Cloudflare's runtime on a Mac: it holds the connection to Mozilla's real service from a Durable Object, pairs, and forwards a push that the app's decryptor then reads. Its tests cover what the Node relay's do, and coming back after a restart with only its alarm to wake it.
 
-- The Worker deployed on Cloudflare, as a dry run: from there it holds its connection to Mozilla's service, pairs and unpairs a phone, and reaches Apple's push service, which answers it (`MissingProviderToken`, as it should without a key).
+- The Worker deployed on Cloudflare, as a dry run: from there it holds its connection to Mozilla's service, pairs and unpairs a phone, and reaches Apple's push service, which answers it (`MissingProviderToken`, as it should without a key). Deployed again with the key, its `/apple` check answers `BadDeviceToken`: Apple accepts the key.
 
-**Not yet run:** a push through Apple's real service, and therefore the notification extension as its own process on an iPhone. Nor is it known yet how the deployed Worker's connection to Mozilla holds over days. The simulator can't stand in for that: `xcrun simctl push` puts a notification straight into Notification Centre without running an extension. The extension's work is one shared function, which is what the simulator test runs (see [Testing](#testing)), and its access to the keys was checked from the build: the keys are stored in the app's Keychain group, and the extension's entitlements name that group.
+**13 November 2026**, on an iPhone, with a real account:
+
+- The whole route. A build signed for push (run from a Mac, so on Apple's sandbox push service) paired with the deployed relay and registered with Instagram. Instagram's notifications then came through Mozilla's service and the relay to Apple, which accepted every one: four in the first ten minutes, none refused. The phone showed them with the sender and the message, so the notification extension ran as its own process and read the keys from the app's Keychain group.
+
+**Not yet known:** how the deployed Worker's connection to Mozilla holds over days, and whether Instagram keeps sending over weeks. Apple's production push service, which a distributed build uses, hasn't carried a push yet: the relay sends there for such a build, by the same code. The simulator can't stand in for an iPhone: `xcrun simctl push` puts a notification straight into Notification Centre without running an extension. The extension's work is one shared function, which is what the simulator test runs (see [Testing](#testing)).
 
 **Why Mozilla and not Google:** Google's service would need a client rebuilt from observation and outbound ports 5228 to 5230. Mozilla's is an open, documented WebSocket protocol on port 443, with a maintained reference client ([Bitwarden's autopush-manager](https://github.com/bitwarden/autopush-manager)).
 
@@ -198,10 +202,7 @@ Registering for real writes to an account: Instagram starts sending that account
 
 ## What's left
 
-The first step needs nothing from Apple; the rest waits on the Apple Developer Program:
-
 1. **Watch the deployed relay** for a few days: `https://relay.unreeled.app/health` should keep saying `"mozilla": true`. If the connection doesn't hold on Cloudflare, the Node relay on an always-on machine does the same job.
-2. **A push key.** In the developer account: Keys › new key with Apple Push Notifications service. That gives the `.p8` file, its key ID and the team ID for the relay's secrets; deploy again with them ([relay/worker/README.md](../relay/worker/README.md)), and its `/apple` check should then answer `BadDeviceToken`.
-3. **A signed build** with the three settings above, on an iPhone.
-4. **The first real notification:** turn notifications on, have someone send a message, and see it arrive decrypted, with the sender's picture. This is the first run of the extension itself.
-5. **Then:** watch whether notifications keep coming over days, and publish the privacy policy's new section with the release that has notifications.
+2. **Watch the notifications** over days and weeks: do they keep coming, and how soon after the message? Instagram has been seen to stop sending without saying so. `/health` says how many the relay has forwarded and when the last one was.
+3. **A distributed build,** which gets its notifications from Apple's production push service. Only the sandbox one has carried a real push so far.
+4. **Publish the privacy policy's new section** with the release that has notifications.

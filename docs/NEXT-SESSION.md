@@ -1,6 +1,6 @@
 # Next session: notifications
 
-**Where it stands (13 November 2026).** The relay, the app's side and the notification extension are built, and tested up to Apple's push service: [NOTIFICATIONS.md](NOTIFICATIONS.md) has the design, what's proven and how to test. The relay is also written as a Cloudflare Worker, deployed at `relay.unreeled.app` as a dry run (no Apple key yet). Left: everything that needs the Apple Developer Program.
+**Where it stands (13 November 2026).** It works: Instagram's real notifications reach an iPhone, decrypted, through the relay deployed at `relay.unreeled.app`. [NOTIFICATIONS.md](NOTIFICATIONS.md) has the design, what's proven and how to test. Left: seeing how it holds over days, and everything a release needs.
 
 ## Done
 
@@ -11,19 +11,22 @@
 - **The relay as a Cloudflare Worker** ([relay/worker/](../relay/worker/README.md)): a Durable Object holds the connection to Mozilla, an alarm every minute brings it back after a restart. Fourteen tests pass in Cloudflare's runtime on a Mac, and a push sent through Mozilla's real service came out of it readable by the app's decryptor. Deployed as a dry run on 13 November: from Cloudflare it holds its connection to Mozilla, pairs and unpairs, and reaches Apple (`GET /apple` answered `MissingProviderToken`). The host name moved to it from the old push test's Worker, which was then deleted with its database. A first version reconnected every two minutes, because a connection that carries nothing gets closed; it now pings Mozilla once a minute and holds one connection.
 - **Tested in the simulator** with a stand-in sender and Mozilla's real service: pairing, a push through Mozilla and the relay, decryption in both encodings, taps, switching off. No write was made to any Instagram account.
 - **The privacy policy** has a section on notifications, and the website's home page and `llms.txt` say the same in a sentence. They go live when this branch reaches `main`, which rebuilds the site.
+- **The relay is live.** With the team in the Apple Developer Program came a push key (Sandbox & Production, team scoped). The relay's secrets file has it, and the Worker was deployed again without `RELAY_DRY_RUN`: `GET /apple` answers `BadDeviceToken`, which means Apple accepts the key.
+- **The first real notifications, on an iPhone.** A Release build signed for push, with `UNREELED_ENTITLEMENTS`, `UNREELED_RELAY_HOST` and `UNREELED_RELAY_TOKEN` set in `Config/Local.xcconfig`, went onto the phone over the installed app. Xcode made the profiles for the app and for the extension by itself. Notifications were turned on in the app, the phone paired with the relay, and Instagram's notifications arrived with the sender and the message: the first run of the extension itself. Apple accepted all four pushes of the first ten minutes.
 
 ## To do, in order
 
-1. **Watch the deployed relay** for a day or two: `curl https://relay.unreeled.app/health` should keep answering `"mozilla": true`. That's the one thing about Cloudflare still unknown: how the connection to Mozilla holds over days. If it doesn't, the Node relay on an always-on machine is the fallback ([relay/README.md](../relay/README.md)).
-2. **Enrol in the Apple Developer Program.** Then, in the developer account: Keys › a new key with Apple Push Notifications service. Add the `.p8` file's text, the key ID, the team ID and the bundle ID to the relay's secrets file (it's outside the repository, with the pairing token already in it) and deploy again from `relay/worker`, without `RELAY_DRY_RUN`: [relay/worker/README.md](../relay/worker/README.md). `GET /apple` should then answer `BadDeviceToken`.
-3. **Build for the iPhone with push.** In `Config/Local.xcconfig`, set `UNREELED_ENTITLEMENTS = Config/Push.entitlements`, `UNREELED_RELAY_HOST = relay.unreeled.app` and `UNREELED_RELAY_TOKEN` to the pairing token. Xcode makes the provisioning profiles for the app and for the extension (`<bundle ID>.NotificationService`). This signed build hasn't been tried: only the unsigned Release build and the simulator's.
-4. **The first real notification.** Turn notifications on in the app on the iPhone (this registers with Instagram: a write to the account), have someone send a message, and see it arrive decrypted with the sender's picture. This is the first time the extension itself runs. If the banner says "New notification on Instagram", the extension didn't decrypt: look at the phone's log for `UnreeledNotifications`.
-5. **Watch it for some days.** Do notifications keep coming? Instagram has been seen to stop without saying so ([mautrix/meta#454](https://github.com/mautrix/meta/issues/454)). The relay's `/health` shows when it last forwarded one.
-6. **Before a public build has it:** decide who runs the shared relay and under which name, deploy the website so the privacy policy's new section is live, and consider App Attest or rate limits on `/pair` in place of the shared pairing token.
+1. **Watch it for some days.** `curl https://relay.unreeled.app/health` should keep answering `"mozilla": true`, and `forwarded` should grow with the notifications: how the connection to Mozilla holds over days on Cloudflare is still unknown, and Instagram has been seen to stop sending without saying so ([mautrix/meta#454](https://github.com/mautrix/meta/issues/454)). If the connection doesn't hold, the Node relay on an always-on machine is the fallback ([relay/README.md](../relay/README.md)).
+2. **Look closer at what arrives:** one notification for each message or two (the relay's count went up by two at a time), how long after the message, and whether the sender's picture shows.
+3. **Pick the release bundle ID.** Apple refuses `app.unreeled`, the one [RELEASING.md](RELEASING.md) names: another developer holds it. Whichever is chosen goes into `APNS_TOPIC` in the relay's secrets, next to the one in use.
+4. **A distributed build** gets its notifications from Apple's production push service, which hasn't carried a push yet.
+5. **Before a public build has it:** decide who runs the shared relay and under which name, deploy the website so the privacy policy's new section is live, and consider App Attest or rate limits on `/pair` in place of the shared pairing token.
 
 ## Worth knowing
 
 - **Writes to the account need an explicit yes.** Turning notifications on in a build that isn't a dry run is one.
+- **Signing from the command line** uses the Apple account that Xcode has saved. If `xcodebuild -allowProvisioningUpdates` answers "No Accounts" while Xcode › Settings › Apple Accounts shows you signed in, sign out and in again there: the app can hold a session its saved list has lost.
+- **If a banner says "New notification on Instagram",** the push arrived but the extension didn't decrypt it: look at the phone's log for `UnreeledNotifications`.
 - **`xcrun simctl push` doesn't run the extension.** Debug builds do its work in the app instead when the app is open, which is how the simulator test shows decrypted banners.
 - **The iOS 27 simulator's switches** don't flip on a quick synthetic tap; slide them.
 - **Old test registrations** are still on the account from 12 November: two Mozilla addresses and one of Google's. Instagram has no call to remove them; they go stale.

@@ -109,7 +109,7 @@ Opening Activity marks nothing as seen, as on the website. It reloads when you c
 
 ## Notifications
 
-Only in a build made with a relay, and off until you turn them on: [NOTIFICATIONS.md](NOTIFICATIONS.md) has the whole design. Not yet tried on an iPhone.
+Only in a build made with a relay, and off until you turn them on: [NOTIFICATIONS.md](NOTIFICATIONS.md) has the whole design. They have worked on an iPhone since 13 November 2026; how they hold over weeks isn't known yet.
 
 - **Asking.** Once, after logging in, a page says what notifications are and what turning them on means, with "Turn On" and "Not Now". "Turn On" brings up iOS's own question. The same page comes up when you switch them on in Settings.
 - **In Settings:** a switch, since when they've been on, a way into iOS Settings when notifications are off for Unreeled there, and "Choose What Instagram Sends", which opens Instagram's own page for the kinds of notification, with its "Messages only".

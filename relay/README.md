@@ -11,7 +11,7 @@ The design, and why it's built this way: [docs/NOTIFICATIONS.md](../docs/NOTIFIC
 It exists twice, answering the same calls and forwarding the same push:
 
 - **Here**, as a Node program for any machine that's always on. This is the one that has run longest against Mozilla's service.
-- **In [worker/](worker/README.md)**, as a Cloudflare Worker with a Durable Object: nothing to host. The project's own relay is this one, at `relay.unreeled.app`, for now as a dry run without Apple's key.
+- **In [worker/](worker/README.md)**, as a Cloudflare Worker with a Durable Object: nothing to host. The project's own relay is this one, at `relay.unreeled.app`.
 
 The rest of this page is about the Node one. What the two share (the pairing calls, what's stored, the privacy) is the same in both.
 

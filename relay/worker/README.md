@@ -11,7 +11,7 @@ Instagram ──► Mozilla's push service ──► Durable Object `Relay` ─�
 - **The Worker** ([src/index.ts](src/index.ts)) takes `/pair`, `/unpair` and `/health`, checks the pairing token, and hands the work to the object.
 - **One Durable Object, `Relay`** ([src/relay.ts](src/relay.ts)), is the relay itself. It keeps the WebSocket to Mozilla open ([src/mozilla.ts](src/mozilla.ts)), stores one record per phone in its own SQLite storage, and sends each push on to Apple ([src/apns.ts](src/apns.ts)).
 
-**Deployed as a dry run** since 13 November 2026, at `relay.unreeled.app`: everything but Apple's key. From there it holds its connection to Mozilla's service, pairs and unpairs phones, and reaches Apple (see [Apple, and why it can't be tried locally](#apple-and-why-it-cant-be-tried-locally)). Still to see: how the connection to Mozilla holds up over days, and a real push to a real phone, which needs the key.
+**Deployed** since 13 November 2026, at `relay.unreeled.app`, first as a dry run and then live, with Apple's key. From there it holds its connection to Mozilla's service, pairs and unpairs phones, and Apple accepts its key (see [Apple, and why it can't be tried locally](#apple-and-why-it-cant-be-tried-locally)). The same day it carried Instagram's real notifications to an iPhone. Still to see: how the connection to Mozilla holds up over days.
 
 ## How it stays connected
 
