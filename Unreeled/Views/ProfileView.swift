@@ -51,6 +51,7 @@ struct ProfileView: View {
                 .padding(40)
             }
         }
+        .scrollsToTopOnTabReselect()
         .background(Color.white)
         .refreshable { await load() }
         .task {

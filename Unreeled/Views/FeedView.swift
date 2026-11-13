@@ -9,10 +9,18 @@ struct FeedView: View {
     @AppStorage("showsReels") private var showsReels = false
     @State private var feed = FeedModel()
     @State private var width: CGFloat = 0
+    /// Home tapped again at the top: the feed loads again, with a spinner above it.
+    @State private var isRefreshing = false
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
+                if isRefreshing {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .transition(.opacity)
+                }
                 StoriesTray()
                 ForEach($feed.posts) { $post in
                     PostCard(post: $post)
@@ -30,6 +38,7 @@ struct FeedView: View {
                 }
             }
         }
+        .scrollsToTopOnTabReselect { await refreshFromTab() }
         .background(Color.white)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .refreshable { await reload() }
@@ -68,6 +77,13 @@ struct FeedView: View {
         async let tray: Void = stories.loadTray(api: session.api)
         _ = await (posts, tray)
     }
+
+    private func refreshFromTab() async {
+        guard !isRefreshing else { return }
+        withAnimation(.snappy(duration: 0.2)) { isRefreshing = true }
+        await reload()
+        withAnimation(.snappy(duration: 0.2)) { isRefreshing = false }
+    }
 }
 
 @MainActor
@@ -80,6 +96,13 @@ final class FeedModel {
     var showsReels = false
     private var cursor: String?
     private var reachedEnd = false
+    /// The furthest post that has come on screen, to load the next page well before the end.
+    private var furthestSeen = 0
+    /// Posts the last page added, so a page of only reels doesn't keep loading more on its own.
+    private var lastPageAdded = 0
+
+    /// How many posts before the end the next page starts loading: about six screens.
+    private static let lookahead = 8
 
     private func belongs(_ post: Media) -> Bool {
         showsReels || !post.isReel
@@ -93,23 +116,33 @@ final class FeedModel {
         }
         cursor = nil
         reachedEnd = false
+        furthestSeen = 0
         await load(api: api, replacing: true)
     }
 
-    /// The next few posts' first pictures, decoded before they scroll into view.
+    /// The next posts' first pictures: the next four decoded before they scroll into view, the four
+    /// after onto the phone.
     func prefetchImages(after post: Media, pixels: CGFloat) {
         guard pixels > 0, let index = posts.firstIndex(where: { $0.id == post.id }) else { return }
-        let next = posts.dropFirst(index + 1).prefix(3)
-        ImageCache.shared.prefetch(next.compactMap { ($0.children.first ?? $0).imageURL(width: pixels) }, decode: true)
+        let next = posts.dropFirst(index + 1).prefix(8).compactMap { ($0.children.first ?? $0).imageURL(width: pixels) }
+        ImageCache.shared.prefetch(Array(next.prefix(4)), decode: true)
+        ImageCache.shared.prefetch(Array(next.dropFirst(4)), decode: false)
     }
 
-    /// Fetches the next page when `post` is one of the last few.
+    /// Fetches the next page once `post` is within the last eight, well before you reach the end.
     func loadMore(near post: Media, api: InstagramAPI) {
-        guard !isLoading, !reachedEnd, error == nil,
-              let index = posts.firstIndex(where: { $0.id == post.id }),
-              index >= posts.count - 3
-        else { return }
-        Task { await load(api: api, replacing: false) }
+        guard let index = posts.firstIndex(where: { $0.id == post.id }) else { return }
+        furthestSeen = max(furthestSeen, index)
+        loadMoreIfNeeded(api: api)
+    }
+
+    private func loadMoreIfNeeded(api: InstagramAPI) {
+        guard !isLoading, !reachedEnd, error == nil, furthestSeen >= posts.count - Self.lookahead else { return }
+        Task {
+            await load(api: api, replacing: false)
+            // Still near the end (that page was mostly reels): the one after it, too.
+            if lastPageAdded > 0 { loadMoreIfNeeded(api: api) }
+        }
     }
 
     private func load(api: InstagramAPI, replacing: Bool) async {
@@ -123,7 +156,7 @@ final class FeedModel {
             // Most of a page can be reels. Keep going (a little) until there are a few posts to show.
             repeat {
                 let data = try await api.timelineData(cursor: cursor)
-                let page = try api.timelinePage(from: data, first: cursor == nil)
+                let page = try await api.timelinePage(from: data, first: cursor == nil)
                 pages.append(data)
                 cursor = page.cursor
                 reachedEnd = page.cursor == nil
@@ -135,6 +168,7 @@ final class FeedModel {
                 }
             } while fresh.count < 4 && !reachedEnd && pages.count < 4
 
+            lastPageAdded = fresh.count
             if !replacing {
                 posts += fresh
             } else if shownEarly > 0 {

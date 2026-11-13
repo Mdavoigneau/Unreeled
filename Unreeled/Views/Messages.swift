@@ -210,6 +210,24 @@ final class InboxModel {
     /// Conversations with something new from someone else: the badge on Home's paper plane.
     var unreadCount: Int { threads.filter(\.isUnread).count }
 
+    /// The saved inbox at launch, read off the main thread: the paper plane's count and the
+    /// conversations before Instagram answers. Then what's ready on the phone, decoded ahead.
+    func showSaved(api: InstagramAPI) async {
+        guard threads.isEmpty, let saved = await api.savedInbox(), threads.isEmpty else { return }
+        threads = saved.threads
+        mailboxID = saved.mailboxID
+        cursor = saved.cursor
+        // Everyone's picture in the list, the saved copies of the 8 most recent conversations and
+        // the 3 you open most, and the newest pictures of the first three: they open complete.
+        // All from the phone; nothing goes to Instagram.
+        ImageCache.shared.warm(threads.compactMap { $0.people.first?.avatarURL })
+        var seen = Set<String>()
+        let ids = (threads.prefix(8).map(\.id) + ChatStats.mostOpened(3)).filter { seen.insert($0).inserted }
+        for thread in await ThreadStore.warm(ids).prefix(3) {
+            ImageCache.shared.warm(thread.people.compactMap(\.avatarURL) + Self.latestPictures(of: thread).prefix(4))
+        }
+    }
+
     /// The saved inbox at once, then Instagram's. Without `force`, not again within ten seconds.
     func load(api: InstagramAPI, force: Bool = true) async {
         if threads.isEmpty, let saved = api.cachedInbox() {
@@ -239,6 +257,7 @@ final class InboxModel {
             mailboxID = inbox.mailboxID
             loadedAt = .now
             error = nil
+            ImageCache.shared.warm(threads.compactMap { $0.people.first?.avatarURL })
             prefetch(api: api)
         } catch {
             if threads.isEmpty { self.error = error.localizedDescription }
@@ -299,13 +318,19 @@ final class InboxModel {
     /// The pictures in a conversation's latest messages: the newest few decoded so they show at
     /// once, the others onto disk.
     static func prefetchPictures(of thread: DirectThread) {
+        let pictures = latestPictures(of: thread)
+        ImageCache.shared.prefetch(thread.people.compactMap(\.avatarURL) + pictures.prefix(4), decode: true)
+        ImageCache.shared.prefetch(Array(pictures.dropFirst(4)), decode: false)
+    }
+
+    /// Photos, video covers and shared posts in the latest messages, newest first.
+    private static func latestPictures(of thread: DirectThread) -> [URL] {
         var pictures: [URL] = []
         for message in (thread.slideMessages?.nodes ?? []).prefix(8) {
             pictures += message.attachments.filter { $0.kind != .audio }.compactMap(\.previewURL)
             if let preview = message.card?.previewImage?.url.flatMap(URL.init(string:)) { pictures.append(preview) }
         }
-        ImageCache.shared.prefetch(thread.people.compactMap(\.avatarURL) + pictures.prefix(4), decode: true)
-        ImageCache.shared.prefetch(Array(pictures.dropFirst(4)), decode: false)
+        return pictures
     }
 
     func loadMore(near thread: DirectThread, api: InstagramAPI) {
@@ -378,12 +403,9 @@ struct ConversationView: View {
     @Environment(Session.self) private var session
     @Environment(InboxModel.self) private var inbox
     @State private var model: ConversationModel
-    @State private var draft = ""
-    @State private var picked: [PhotosPickerItem] = []
     @State private var viewing: MediaItem?
     @State private var viewOnce: DirectMessage?
     @State private var recorder = VoiceRecorder()
-    @State private var micDenied = false
     /// Whether you're at the end of the conversation, where new messages scroll into view.
     @State private var atBottom = true
 
@@ -450,7 +472,7 @@ struct ConversationView: View {
                     withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
                 }
             }
-            composer
+            Composer(model: model, recorder: recorder)
         }
         .background(Color.white)
         .classicBar(showsBack: true) {
@@ -493,12 +515,23 @@ struct ConversationView: View {
         if let first = person?.fullName?.split(separator: " ").first { return String(first) }
         return person?.username ?? "them"
     }
+}
+
+/// The field at the bottom: text, photos and videos, and voice messages. A view of its own, so
+/// typing redraws only this, not the conversation above it.
+private struct Composer: View {
+    let model: ConversationModel
+    let recorder: VoiceRecorder
+    @Environment(Session.self) private var session
+    @State private var draft = ""
+    @State private var picked: [PhotosPickerItem] = []
+    @State private var micDenied = false
 
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var composer: some View {
+    var body: some View {
         Group {
             if recorder.isActive { recordingBar } else { typingBar }
         }

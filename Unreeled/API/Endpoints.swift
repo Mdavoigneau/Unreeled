@@ -12,7 +12,7 @@ extension InstagramAPI {
     /// (the website's instagram.com/?variant=following). The first page is small, as on the
     /// website, so it shows quickly.
     func timeline(cursor: String? = nil) async throws -> Page<Media> {
-        try timelinePage(from: await timelineData(cursor: cursor), first: cursor == nil)
+        try await timelinePage(from: timelineData(cursor: cursor), first: cursor == nil)
     }
 
     /// One page of the feed as Instagram sent it.
@@ -39,8 +39,8 @@ extension InstagramAPI {
     }
 
     /// The posts in a page of the feed, without ads.
-    func timelinePage(from data: Data, first: Bool) throws -> Page<Media> {
-        let feed = try decode(Connection<FeedNode>.self, from: data)
+    func timelinePage(from data: Data, first: Bool) async throws -> Page<Media> {
+        let feed = try await decoded(Connection<FeedNode>.self, from: data)
         let posts = feed.nodes.filter { !$0.isAd }.compactMap(\.media)
         #if DEBUG
         var summary: [String: Any] = [:]
@@ -78,7 +78,7 @@ extension InstagramAPI {
 
     func profile(id: String) async throws -> Profile {
         let data = try await queryData("PolarisProfilePageContentQuery", ["enable_integrity_filters": true, "id": id], at: ["user"])
-        let profile = try decode(Profile.self, from: data)
+        let profile = try await decoded(Profile.self, from: data)
         ResponseCache.shared.store(data, for: "profile-\(id)")
         return profile
     }
@@ -110,7 +110,7 @@ extension InstagramAPI {
                 ["data": options, "username": username],
                 at: ["xdt_api__v1__feed__user_timeline_graphql_connection"]
             )
-            posts = try decode(Connection<Media>.self, from: data)
+            posts = try await decoded(Connection<Media>.self, from: data)
             ResponseCache.shared.store(data, for: "posts-\(username)")
         }
         return Page(items: posts.nodes, cursor: posts.nextCursor)
@@ -170,7 +170,7 @@ extension InstagramAPI {
             ["data": ["is_following_feed": false, "reason": "web_home"]],
             at: ["xdt_api__v1__feed__reels_tray"]
         )
-        let tray = try decode(ReelsTray.self, from: data)
+        let tray = try await decoded(ReelsTray.self, from: data)
         ResponseCache.shared.store(data, for: "tray")
         return tray.tray?.elements ?? []
     }
@@ -183,12 +183,16 @@ extension InstagramAPI {
 
     /// The stories of several accounts at once, by user ID, as the website loads them.
     func stories(userIDs: [String]) async throws -> [Reel] {
-        let media = try await query(
+        #if DEBUG
+        NetworkRecorder.append(["time": Date().ISO8601Format(), "storiesBatch": userIDs.count])
+        #endif
+        let data = try await queryData(
             "PolarisStoriesV3ReelPageStandaloneQuery",
             ["reel_ids_arr": userIDs],
-            at: ["xdt_api__v1__feed__reels_media"],
-            as: ReelsMedia.self
+            at: ["xdt_api__v1__feed__reels_media"]
         )
+        let media = try await decoded(ReelsMedia.self, from: data)
+        Task.detached(priority: .utility) { StoryFiles.shared.saveReels(from: data) }
         return media.reelsMedia?.elements ?? []
     }
 
@@ -215,12 +219,11 @@ extension InstagramAPI {
             ["device_id_for_iris_subscription": Self.directDeviceID],
             at: ["get_slide_mailbox_for_iris_subscription"]
         )
-        let inbox = try inboxPage(from: data)
+        let inbox = Self.page(of: try await decoded(Mailbox.self, from: data))
         ResponseCache.shared.store(data, for: "inbox")
         return inbox
     }
 
-    /// The inbox as it was last loaded.
     /// People matching `query`, best first, as the website's inbox search finds them. Each comes
     /// as a one-to-one conversation to open: the website opens it by the person's Direct ID, and
     /// so does the conversation query.
@@ -253,14 +256,20 @@ extension InstagramAPI {
         return people
     }
 
+    /// The inbox as it was last loaded.
     func cachedInbox() -> (threads: [DirectThread], mailboxID: String?, cursor: String?)? {
-        ResponseCache.shared.data(for: "inbox").flatMap { try? inboxPage(from: $0) }
+        ResponseCache.shared.data(for: "inbox").flatMap { try? Self.page(of: Self.decodeSaved(Mailbox.self, from: $0)) }
     }
 
-    private func inboxPage(from data: Data) throws -> (threads: [DirectThread], mailboxID: String?, cursor: String?) {
-        let mailbox = try decode(Mailbox.self, from: data)
-        let threads = mailbox.threadsByFolder?.nodes.compactMap(\.asIgDirectThread) ?? []
-        return (threads, mailbox.id, mailbox.threadsByFolder?.nextCursor)
+    /// The same, read off the main thread.
+    func savedInbox() async -> (threads: [DirectThread], mailboxID: String?, cursor: String?)? {
+        await Task.detached(priority: .userInitiated) {
+            ResponseCache.shared.data(for: "inbox").flatMap { try? InstagramAPI.page(of: InstagramAPI.decodeSaved(Mailbox.self, from: $0)) }
+        }.value
+    }
+
+    private nonisolated static func page(of mailbox: Mailbox) -> (threads: [DirectThread], mailboxID: String?, cursor: String?) {
+        (mailbox.threadsByFolder?.nodes.compactMap(\.asIgDirectThread) ?? [], mailbox.id, mailbox.threadsByFolder?.nextCursor)
     }
 
     func moreThreads(mailboxID: String, cursor: String) async throws -> Page<DirectThread> {
@@ -280,7 +289,7 @@ extension InstagramAPI {
             ["min_uq_seq_id": NSNull(), "thread_fbid": threadFbid],
             at: ["get_slide_thread_nullable"]
         )
-        guard let thread = try decode(ThreadDetail.self, from: data).asIgDirectThread else { return nil }
+        guard let thread = try await decoded(ThreadDetail.self, from: data).asIgDirectThread else { return nil }
         ThreadStore.save(data, thread: thread, id: threadFbid)
         return thread
     }
@@ -512,7 +521,7 @@ extension InstagramAPI {
             ["inbox_request_data": [String: Any](), "pending_request_data": [String: Any]()],
             at: []
         )
-        let feed = try decode(ActivityFeed.self, from: data)
+        let feed = try await decoded(ActivityFeed.self, from: data)
         ResponseCache.shared.store(data, for: "activity")
         #if DEBUG
         // Kinds of notification only (type, destination, whether there's a post), to route taps.

@@ -97,12 +97,26 @@ struct Media: Decodable, Hashable, Identifiable {
         return min(max(width / height, 0.8), 1.91)
     }
 
-    /// The smallest image at least `pixels` wide, or the largest there is.
+    /// The smallest image at least `pixels` wide, or the largest there is, in the media's own
+    /// shape. Instagram also lists square crops (a 9:16 story comes with 1080×1080 and 640×640
+    /// ones), which would show zoomed in.
     func imageURL(width pixels: CGFloat) -> URL? {
-        let candidates = (imageVersions2?.candidates ?? children.first?.imageVersions2?.candidates ?? [])
-            .sorted { ($0.width ?? 0) < ($1.width ?? 0) }
+        let source = imageVersions2?.candidates == nil ? children.first ?? self : self
+        let all = source.imageVersions2?.candidates ?? []
+        let shape = source.shape ?? all.max { $0.area < $1.area }?.shape
+        let inShape = all.filter { candidate in
+            guard let shape, let own = candidate.shape else { return true }
+            return abs(own - shape) / shape < 0.04
+        }
+        let candidates = (inShape.isEmpty ? all : inShape).sorted { ($0.width ?? 0) < ($1.width ?? 0) }
         let image = candidates.first { ($0.width ?? 0) >= pixels } ?? candidates.last
         return image.flatMap { URL(string: $0.url) }
+    }
+
+    /// Width over height, as posted.
+    var shape: CGFloat? {
+        guard let width = originalWidth, let height = originalHeight, width > 0, height > 0 else { return nil }
+        return CGFloat(width / height)
     }
 }
 
@@ -119,6 +133,14 @@ struct Rendition: Decodable, Hashable {
     let url: String
     let width: Double?
     let height: Double?
+
+    var area: Double { (width ?? 0) * (height ?? 0) }
+
+    /// Width over height.
+    var shape: CGFloat? {
+        guard let width, let height, width > 0, height > 0 else { return nil }
+        return CGFloat(width / height)
+    }
 }
 
 struct Location: Decodable, Hashable {

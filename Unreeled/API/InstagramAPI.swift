@@ -84,11 +84,12 @@ final class InstagramAPI: NSObject {
     // MARK: GraphQL
 
     /// Runs one of the website's GraphQL queries and decodes the object at `path` in its data.
-    func query<T: Decodable>(_ name: String, _ variables: [String: Any], at path: [String], as type: T.Type = T.self) async throws -> T {
-        try decode(type, from: await queryData(name, variables, at: path))
+    nonisolated func query<T: Decodable>(_ name: String, _ variables: [String: Any], at path: [String], as type: T.Type = T.self) async throws -> T {
+        try await decoded(type, from: queryData(name, variables, at: path))
     }
 
-    /// The JSON at `path` in a query's data, as Instagram sent it, to decode and to save.
+    /// The JSON at `path` in a query's data, as Instagram sent it, to decode and to save. Read and
+    /// written off the main thread, like the rest of a response.
     func queryData(_ name: String, _ variables: [String: Any], at path: [String]) async throws -> Data {
         var node: Any = try await graphQL(name, variables)
         for key in path {
@@ -104,7 +105,22 @@ final class InstagramAPI: NSObject {
             NetworkRecorder.append(["time": Date().ISO8601Format(), "directShape": name, "shape": NetworkRecorder.shape(of: node)])
         }
         #endif
-        return try JSONSerialization.data(withJSONObject: node)
+        return try await Self.serialized(node)
+    }
+
+    @concurrent
+    private nonisolated static func serialized(_ node: Any) async throws -> Data {
+        try JSONSerialization.data(withJSONObject: node)
+    }
+
+    /// Decodes Instagram's JSON off the main thread, so a large response never holds up scrolling.
+    @concurrent
+    nonisolated func decoded<T: Decodable>(_ type: T.Type, from data: Data) async throws -> T {
+        do {
+            return try Self.decodeSaved(type, from: data)
+        } catch let error as DecodingError {
+            throw Failure.unreadable(Self.describe(error))
+        }
     }
 
     /// Decodes a saved response the way queries decode Instagram's, from any thread.
@@ -168,7 +184,12 @@ final class InstagramAPI: NSObject {
             NetworkRecorder.append(["time": Date().ISO8601Format(), "siteValues": found, "query": name, "status": status])
         }
         #endif
-        return try Self.data(of: name, status: status, body: body)
+        return try await Self.parsed(name, status: status, body: body)
+    }
+
+    @concurrent
+    private nonisolated static func parsed(_ name: String, status: Int, body: String) async throws -> [String: Any] {
+        try data(of: name, status: status, body: body)
     }
 
     /// Runs first in the hidden page: the session values the website embeds in its pages. Every
@@ -255,7 +276,7 @@ final class InstagramAPI: NSObject {
         """#
 
     /// The data of a GraphQL response, with streamed parts merged in.
-    private static func data(of name: String, status: Int, body: String) throws -> [String: Any] {
+    private nonisolated static func data(of name: String, status: Int, body: String) throws -> [String: Any] {
         var text = Substring(body)
         if text.hasPrefix("for (;;);") { text = text.dropFirst("for (;;);".count) }
         let parts = text.split(whereSeparator: \.isNewline).compactMap {
@@ -291,7 +312,7 @@ final class InstagramAPI: NSObject {
         return data
     }
 
-    private static func merge(_ piece: Any, at path: ArraySlice<Any>, into node: Any) -> Any {
+    private nonisolated static func merge(_ piece: Any, at path: ArraySlice<Any>, into node: Any) -> Any {
         guard let key = path.first else {
             if var object = node as? [String: Any], let fields = piece as? [String: Any] {
                 object.merge(fields) { _, new in new }
@@ -605,7 +626,7 @@ final class InstagramAPI: NSObject {
         }
     }
 
-    private static func describe(_ error: DecodingError) -> String {
+    private nonisolated static func describe(_ error: DecodingError) -> String {
         func path(_ keys: [CodingKey]) -> String {
             keys.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
         }

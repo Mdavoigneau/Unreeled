@@ -91,7 +91,7 @@ enum AppTab: CaseIterable, Hashable {
 /// A flat tab bar: icons only, filled when selected, a hairline on top.
 struct ClassicTabBar: View {
     @Binding var selection: AppTab
-    /// Tapping the open tab again: back to its first screen.
+    /// Tapping the open tab again: back to its first screen, or to the top of it.
     var reselect: (AppTab) -> Void = { _ in }
 
     var body: some View {
@@ -112,6 +112,43 @@ struct ClassicTabBar: View {
         }
         .background(Color.white.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) { Theme.hairline.frame(height: 0.5) }
+    }
+}
+
+extension EnvironmentValues {
+    /// Goes up each time the open tab's button is tapped while its first screen shows.
+    @Entry var tabReselections = 0
+}
+
+extension View {
+    /// For a tab's first screen: back to the top when the tab's button is tapped again, and when
+    /// it's already at the top, `refresh` if there is one (Home loads its feed again).
+    func scrollsToTopOnTabReselect(refresh: (() async -> Void)? = nil) -> some View {
+        modifier(ScrollsToTopOnTabReselect(refresh: refresh))
+    }
+}
+
+private struct ScrollsToTopOnTabReselect: ViewModifier {
+    var refresh: (() async -> Void)?
+    @Environment(\.tabReselections) private var reselections
+    @State private var position = ScrollPosition(edge: .top)
+    @State private var isAtTop = true
+
+    func body(content: Content) -> some View {
+        content
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y <= -geometry.contentInsets.top + 1
+            } action: { _, atTop in
+                isAtTop = atTop
+            }
+            .onChange(of: reselections) {
+                if isAtTop, let refresh {
+                    Task { await refresh() }
+                } else {
+                    withAnimation(.snappy(duration: 0.35)) { position.scrollTo(edge: .top) }
+                }
+            }
     }
 }
 
