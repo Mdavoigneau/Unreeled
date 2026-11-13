@@ -8,5 +8,3 @@ build/
 # Your own signing settings (see Config/Local.example.xcconfig).
 Config/Local.xcconfig
 
-# Written by Design/make_icon.py to check the icon at home-screen sizes.
-Design/icon-preview.png

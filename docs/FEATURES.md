@@ -22,7 +22,7 @@ Retro but sober, after Instagram around 2016:
 - **Tabs:** tapping the open tab again goes back to its first screen. Direct hides the tab bar, as the old app did, and so does the keyboard.
 - **Instant:** what you do shows at once (a message, a story reply, a like) and goes to Instagram in the background. A small "✓ Delivered" confirms it once Instagram has it; if it fails, it says so and offers to retry, or puts things back.
 
-Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars in [Chrome.swift](../Unreeled/Views/Chrome.swift). The app icon is drawn by [Design/make_icon.py](../Design/make_icon.py).
+Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars in [Chrome.swift](../Unreeled/Views/Chrome.swift). The app icon is [AppIcon.png](../Unreeled/Assets.xcassets/AppIcon.appiconset/AppIcon.png): the U of the wordmark in white on steel blue. It's a copy of [Design/AppIcon.png](../Design/AppIcon.png), the flat export of [Design/AppIcon.icon](../Design/AppIcon.icon), which opens in Icon Composer (in Xcode › Open Developer Tool). [Design/glyph.swift](../Design/glyph.swift) draws the U.
 
 ## First launch
 

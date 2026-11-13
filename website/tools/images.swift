@@ -266,7 +266,7 @@ if arguments.first == "--screenshot", arguments.count == 3 {
     screenshot(URL(fileURLWithPath: arguments[1]), name: arguments[2])
     exit(0)
 }
-var document = root.appending(path: "Unreeled/AppIcon.icon")
+var document = root.appending(path: "Design/AppIcon.icon")
 if arguments.first == "--icon", arguments.count == 2 {
     document = URL(fileURLWithPath: arguments[1])
 }
