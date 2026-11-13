@@ -5,11 +5,17 @@
   "type": "module",
   "description": "Unreeled notification relay: receives each opt-in user's Instagram web push via Mozilla's push service and forwards it (still encrypted) to their iPhone via APNs. End-to-end: the relay never holds a decryption key.",
   "license": "MIT",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "start": "node src/index.mjs"
+    "start": "node src/index.mjs",
+    "test": "node --test test/"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "web-push": "^3.6.7"
   }
 }
