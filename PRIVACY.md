@@ -9,7 +9,7 @@ Unreeled is a free, open-source app for using Instagram without Reels, suggestio
 - **Logging in.** You log in on Instagram's own login page, shown inside the app. Unreeled never reads or stores your password.
 - **Your session.** Instagram's cookies stay on your phone, in the app's own web data store. The session values the website provides (such as `fb_dtsg` and `lsd`) are kept in your phone's Keychain, on this device only.
 - **What you see and send.** Feeds, stories, messages, profiles and activity come straight from Instagram's servers to your phone. Messages, photos, videos, voice messages, likes and replies you send go straight from your phone to Instagram. None of it passes through any server of ours.
-- **Saved copies.** So screens open instantly, the app keeps recent responses from Instagram (your feed, conversations, profiles you visit) and pictures in its cache on your phone. Anything unused for two weeks is deleted automatically. Logging out deletes all of it.
+- **Saved copies.** So screens open instantly, the app keeps recent responses from Instagram (your feed, conversations, profiles you visit), pictures, and the stories it loads ahead in its cache on your phone. Stories are deleted after a day, conversations you haven't opened for a month, and everything else unused for two weeks, automatically. Logging out deletes all of it.
 - **Camera, microphone and photos.** The camera and microphone are used only while you take a photo or video for your story or record a voice message. Photos you pick from your library are only the ones you choose to send or post.
 
 What you do on Instagram through Unreeled is subject to [Instagram's own privacy policy](https://privacycenter.instagram.com/policy), as it would be on the website.

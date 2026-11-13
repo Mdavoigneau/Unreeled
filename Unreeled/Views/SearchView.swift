@@ -24,6 +24,7 @@ struct SearchView: View {
                 }
             }
         }
+        .scrollsToTopOnTabReselect()
         .scrollDismissesKeyboard(.immediately)
         .background(Color.white)
         .safeAreaInset(edge: .top, spacing: 0) { searchBar }

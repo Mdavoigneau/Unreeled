@@ -38,7 +38,7 @@ A `<section class="faq">` on any page also goes into its structured data (schema
 
 ## Images
 
-The icon, favicons, wordmark and the card shown for shared links are made from the app's icon, `Unreeled/AppIcon.icon`, and the system fonts the app uses. After the icon changes, run this on a Mac with Xcode 26 or later and commit what it writes:
+The icon, favicons, wordmark and the card shown for shared links are made from the app's icon, `Design/AppIcon.icon`, and the system fonts the app uses. After the icon changes, run this on a Mac with Xcode 26 or later and commit what it writes:
 
 ```bash
 swift website/tools/images.swift

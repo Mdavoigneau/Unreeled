@@ -46,6 +46,7 @@ struct ActivityView: View {
             }
             .padding(.bottom, 12)
         }
+        .scrollsToTopOnTabReselect()
         .background(Color.white)
         .refreshable { await model.load(api: session.api, force: true) }
         // Again when coming back to the tab's first screen, but not more than every half minute.

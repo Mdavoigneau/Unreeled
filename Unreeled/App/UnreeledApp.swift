@@ -7,10 +7,18 @@ struct UnreeledApp: App {
     @State private var session = Session()
 
     init() {
-        // Play video sound even when the phone is on silent, as Safari does.
-        try? AVAudioSession.sharedInstance().setCategory(.playback)
-        // Keep downloaded images on disk, so scrolling back and relaunching don't fetch them again.
-        URLCache.shared = URLCache(memoryCapacity: 32 << 20, diskCapacity: 512 << 20)
+        // Play video sound even when the phone is on silent, as Safari does. Off the main thread:
+        // it takes a few dozen milliseconds, which the first screen shouldn't wait for.
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? AVAudioSession.sharedInstance().setCategory(.playback)
+        }
+        // Pictures are kept by ImageFiles now. URLCache, which kept them before, stored a copy
+        // under each new link Instagram gave the same picture: what it holds is cleared once.
+        URLCache.shared = URLCache(memoryCapacity: 4 << 20, diskCapacity: 20 << 20)
+        if !UserDefaults.standard.bool(forKey: "clearedPictureURLCache") {
+            UserDefaults.standard.set(true, forKey: "clearedPictureURLCache")
+            DispatchQueue.global(qos: .utility).async { URLCache.shared.removeAllCachedResponses() }
+        }
     }
 
     var body: some Scene {
@@ -142,6 +150,8 @@ struct MainView: View {
     @State private var opened: Set<AppTab> = [.home]
     /// The screens each tab has open on top of its first one.
     @State private var paths: [AppTab: [Route]] = [:]
+    /// Taps on the open tab's button while its first screen shows, which take it back to the top.
+    @State private var reselections: [AppTab: Int] = [:]
     @State private var isTyping = false
 
     var body: some View {
@@ -150,6 +160,7 @@ struct MainView: View {
                 if opened.contains(tab) {
                     NavigationStack(path: path(for: tab)) { screen(for: tab).routes() }
                         .environment(\.navigate, NavigateAction(tab: tab) { route in paths[tab, default: []].append(route) })
+                        .environment(\.tabReselections, reselections[tab] ?? 0)
                         .opacity(self.tab == tab ? 1 : 0)
                         .allowsHitTesting(self.tab == tab)
                         .accessibilityHidden(self.tab != tab)
@@ -158,22 +169,32 @@ struct MainView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if showsTabBar {
-                ClassicTabBar(selection: $tab) { paths[$0] = [] }
-                    .transition(.move(edge: .bottom))
+                ClassicTabBar(selection: $tab) { tab in
+                    // With a screen open on top, back to the first one; on the first one, back to the top.
+                    if paths[tab]?.isEmpty == false {
+                        paths[tab] = []
+                    } else {
+                        reselections[tab, default: 0] += 1
+                    }
+                }
+                .transition(.move(edge: .bottom))
             }
         }
         .animation(.snappy(duration: 0.25), value: showsTabBar)
         .onChange(of: tab) { opened.insert(tab) }
         .task {
-            ResponseCache.shared.clean()
+            Self.cleanCaches()
             // Newer query IDs from the project, if Instagram changed any (at most every 6 hours).
             Task { await QueryUpdates.check(afterFailure: false) }
-            // The inbox, a moment after the first screen: the paper plane's count, and the latest
-            // conversations ready to open.
+            // The saved inbox at once: the paper plane's count, and the latest conversations ready
+            // to open. Instagram's a moment after the first screen.
+            await inbox.showSaved(api: session.api)
             try? await Task.sleep(for: .seconds(2))
             await inbox.load(api: session.api, force: false)
         }
         .onChange(of: scenePhase) { _, phase in
+            // Leaving the screen: what the app keeps on the phone is trimmed, to stay light.
+            if phase == .background { Self.cleanCaches() }
             guard phase == .active else { return }
             Task { await QueryUpdates.check(afterFailure: false) }
             Task { await inbox.load(api: session.api, force: false) }
@@ -192,6 +213,13 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             isTyping = false
         }
+    }
+
+    /// Saved screens, pictures and stories past their time or over their size, in the background.
+    private static func cleanCaches() {
+        ResponseCache.shared.clean()
+        ImageFiles.shared.clean()
+        StoryFiles.shared.clean()
     }
 
     /// Not in Direct, which gets the whole screen as in the old app, nor over the keyboard.

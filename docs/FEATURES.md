@@ -19,7 +19,7 @@ Retro but sober, after Instagram around 2016:
 - **Bars:** flat white with hairline borders. The app draws its own top bar and tab bar instead of the iOS 26 Liquid Glass ones. Navigation is still native, including swiping back from the left edge.
 - **Type and colour:** Helvetica Neue, outline icons, and steel blue as the only accent (links, buttons, story rings).
 - **Details:** uppercase timestamps, carousel dots under the photo, and a "Stories · Watch All" tray.
-- **Tabs:** tapping the open tab again goes back to its first screen. Direct hides the tab bar, as the old app did, and so does the keyboard.
+- **Tabs:** tapping the open tab again goes back to its first screen, and on the first screen, back to the top. On Home, already at the top, it loads the feed again, with a spinner above it. Tapping the status bar also goes back to the top. Direct hides the tab bar, as the old app did, and so does the keyboard.
 - **Instant:** what you do shows at once (a message, a story reply, a like) and goes to Instagram in the background. A small "✓ Delivered" confirms it once Instagram has it; if it fails, it says so and offers to retry, or puts things back.
 
 Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars in [Chrome.swift](../Unreeled/Views/Chrome.swift). The app icon is [AppIcon.png](../Unreeled/Assets.xcassets/AppIcon.appiconset/AppIcon.png): the U of the wordmark in white on steel blue. It's a copy of [Design/AppIcon.png](../Design/AppIcon.png), the flat export of [Design/AppIcon.icon](../Design/AppIcon.icon), which opens in Icon Composer (in Xcode › Open Developer Tool). [Design/glyph.swift](../Design/glyph.swift) draws the U.
@@ -32,14 +32,18 @@ Before anything else, a short notice says what Unreeled is and what using it mea
 
 Screens open on what the app saved last time, then update when Instagram answers:
 
+- **Launch.** The app opens straight on Home's saved feed for the account logged in last time, while WebKit checks the cookies in the background (about a third of a second). If they're gone, the login page follows.
 - **Saved copies.** Home's feed, the stories tray, the inbox, conversations, Activity and the profiles you visit are kept as Instagram sent them. Each screen shows its copy at once. A conversation opens complete, pictures and all, on its newest message. One you've never opened shows the inbox's last few messages, with grey shapes for photos until the rest arrives.
-- **Conversations ahead of time.** Two seconds after launch, and whenever the app comes back to the front, the inbox loads. That gives the paper plane its unread count. Then the app loads the 4 most recent conversations and the 3 you open most, one a second, but only those with something newer than the saved copy. Loading one this way doesn't mark it read; only opening it does. The latest pictures of the first three load too.
-- **Stories ahead of time.** The first three accounts with something new load with the picture each starts on, so they open at once.
-- **Pictures ahead of time.** On Home, the next three posts' pictures load before they scroll into view.
+- **Pictures.** Every picture is kept on the phone once it has loaded, so profile pictures, posts and photos in messages show at once, across launches too. Instagram signs a picture's link anew in every response, so the app keeps pictures by what doesn't change: the file's path on Instagram's servers and its size. (Keyed by the full link, the same profile picture was being downloaded and stored again with every refresh: once, 263 times.) Of the sizes Instagram offers, the app takes one in the picture's own shape: it also lists square crops, which made 9:16 stories show zoomed in.
+- **Inbox at launch.** The saved inbox loads as the app opens, which gives the paper plane its count. From the phone only, the app then gets everyone's picture in the list ready, along with the saved copies of the 8 most recent conversations and the 3 you open most, and the newest pictures of the first three.
+- **Conversations ahead of time.** Two seconds after launch, and whenever the app comes back to the front, Instagram's inbox loads. Then the app loads the 4 most recent conversations and the 3 you open most, one a second, but only those with something newer than the saved copy. Loading one this way doesn't mark it read; only opening it does. The latest pictures of the first three load too.
+- **Stories ahead of time.** After the tray loads, the first nine accounts with something new load, three at a time as the website's viewer asks for them, a second apart; the others load while you watch, a batch ahead of where you are. Their photos and videos then go onto the phone one at a time, in the order you'd watch them, until 30 MB of stories are there; what the viewer shows next always goes first. Each account's stories are kept for the day, so a relaunch asks only for accounts that posted since.
+- **Home ahead of time.** The next page of posts loads once you're eight posts from the end, and the one after it too if that page was mostly reels. The next four posts' pictures are decoded before they scroll into view, and the four after go onto the phone.
+- **Smooth scrolling.** Instagram's responses are read and decoded off the main thread, so a page arriving while you scroll doesn't make the list stutter. In a conversation, typing and recording only redraw the field at the bottom, not the messages.
 - **Session values.** The values the website's page provides (`fb_dtsg`, `lsd` and others) are kept in the Keychain, on this device only, and reused for a day. A launch doesn't load instagram.com's page before the first request. They're refreshed in the background after an hour, and at once if a query fails. Requests that need them at the same moment share one read of the page.
-- **Cleaning up.** Saved copies unused for two weeks are deleted at launch. Past 150 files or 50 MB, the least recently used go first. Pictures are in iOS's URL cache (up to 512 MB). Logging out deletes all of it, the Keychain values and the counts of which conversations you open.
+- **Cleaning up.** At every launch and whenever the app leaves the screen, so it stays light: story photos and videos go a day after they were saved, and past 60 MB the least recently watched go first; pictures unused for two weeks go, and past 100 MB the least recently used; saved copies unused for two weeks go, and past 100 files or 40 MB the least recently used. Conversations are kept apart so visiting profiles never pushes them out: the 60 opened last, for a month. Closing the stories viewer trims the stories too. Logging out deletes all of it, the Keychain values and the counts of which conversations you open.
 
-[Caches.swift](../Unreeled/App/Caches.swift) has the saved copies, the Keychain and the open counts.
+[Caches.swift](../Unreeled/App/Caches.swift) has the saved copies, the pictures and story files on the phone (`ImageFiles`, `StoryFiles`), the Keychain and the open counts; [RemoteImage.swift](../Unreeled/Views/RemoteImage.swift) the pictures in memory.
 
 ## Stories
 
@@ -47,9 +51,11 @@ Screens open on what the app saved last time, then update when Instagram answers
 
 The rest of the tray lists accounts you follow with stories, in the website's order. A coloured ring means something new; a grey ring means seen. Tapping an avatar anywhere (tray, post, profile) opens that account's stories. In the viewer:
 
+- The story is a 9:16 card under the status bar, with the reply field below it, as in Instagram's app; on a screen too short for that, it fills the screen. Stories in another shape fit inside the card on black instead of being cropped.
 - Tap the right side for the next item, the left side for the previous one.
-- Hold to pause; swipe down to close. The story shrinks and slides away over the app.
-- While an item loads, a spinner shows and its bar waits: it starts once the photo is on screen or the video plays.
+- Hold to pause; swipe down to close. A swipe starts once your finger has clearly moved down, so taps never nudge the story; it then follows your finger, shrinks a little and slides away over the app.
+- A video plays from the phone when it was loaded ahead, which starts at once, and streams otherwise. Its cover shows until the first frame is ready, never a black flash.
+- While an item loads, a spinner shows and its bar waits: it starts once the photo is on screen or the video plays. The bars move smoothly, redrawn on their own every frame.
 - When one account's stories end, the next account's start.
 
 At the bottom, as on the website:

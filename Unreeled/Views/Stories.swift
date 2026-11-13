@@ -33,21 +33,126 @@ final class StoriesModel {
         prefetch(api: api)
     }
 
-    /// The first three reels with something new, loaded ahead with the picture each starts on,
-    /// so they open at once.
+    // MARK: Ahead of time
+
+    /// Reels being loaded right now, so the viewer and loading ahead don't ask for them twice.
+    private var reelsLoading: Set<String> = []
+    private var isPrefetching = false
+    /// Photos and videos to put on the phone, in the order you'd watch them.
+    private var downloads: [URL] = []
+    /// What the viewer is about to show: these load whatever the budget.
+    private var urgent: Set<URL> = []
+    private var isDownloading = false
+
+    /// Accounts loaded ahead at launch: three batches. The others load while you watch, a batch
+    /// ahead of where you are, as on the website.
+    private static let accountsAhead = 9
+
+    /// The accounts with something new: first from what the phone saved today, when an account has
+    /// posted nothing since; then the first nine still missing, three at a time as the website's
+    /// viewer loads them, a second apart. Their photos and videos are queued for the phone, and
+    /// the first account's opening picture is decoded, so it opens at once.
     private func prefetch(api: InstagramAPI) {
-        let ids = tray.filter { ring(for: $0) == .unseen && loaded[$0.id] == nil }.prefix(3).map(\.id)
-        guard !ids.isEmpty else { return }
+        guard !isPrefetching else { return }
+        isPrefetching = true
+        let ids = tray.filter { ring(for: $0) == .unseen }.map(\.id)
+        let newest = Dictionary(tray.map { ($0.id, $0.latestReelMedia ?? 0) }, uniquingKeysWith: max)
         Task {
-            guard let reels = try? await api.stories(userIDs: ids) else { return }
-            var first = true
-            for reel in reels {
-                if loaded[reel.id] == nil { loaded[reel.id] = reel }
-                let items = reel.items?.elements ?? []
-                let start = items.first { ($0.takenAt ?? 0) > seen(reel) } ?? items.first
-                if let url = start?.imageURL(width: StoryViewer.imageWidth) {
-                    ImageCache.shared.prefetch([url], decode: first)
-                    first = false
+            defer { isPrefetching = false }
+            let saved = await Task.detached(priority: .userInitiated) { StoryFiles.shared.savedReels(ids: ids) }.value
+            let current = saved.filter { reel in
+                loaded[reel.id] == nil && (reel.items?.elements.compactMap(\.takenAt).max() ?? 0) >= (newest[reel.id] ?? .infinity)
+            }
+            for reel in current { loaded[reel.id] = reel }
+            queueFiles(of: current)
+            decodeOpeningPicture(of: ids)
+
+            let missing = ids.prefix(Self.accountsAhead).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+            for (number, start) in stride(from: 0, to: missing.count, by: 3).enumerated() {
+                if number > 0 { try? await Task.sleep(for: .seconds(1)) }
+                let batch = Array(missing.dropFirst(start).prefix(3)).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+                guard !batch.isEmpty else { continue }
+                guard (try? await load(batch, api: api)) != nil else { return }
+                if number == 0 { decodeOpeningPicture(of: ids) }
+            }
+        }
+    }
+
+    /// The picture the first account with something new opens on, decoded ahead.
+    private func decodeOpeningPicture(of ids: [String]) {
+        guard let first = ids.first, let reel = loaded[first],
+              let url = startItem(of: reel)?.imageURL(width: StoryViewer.imageWidth)
+        else { return }
+        Task { _ = await ImageCache.shared.image(for: url, store: .stories) }
+    }
+
+    /// Loads these reels with their items, and queues their photos and videos for the phone.
+    @discardableResult
+    private func load(_ ids: [String], api: InstagramAPI) async throws -> [Reel] {
+        reelsLoading.formUnion(ids)
+        defer { reelsLoading.subtract(ids) }
+        let reels = try await api.stories(userIDs: ids)
+        for reel in reels where loaded[reel.id] == nil { loaded[reel.id] = reel }
+        queueFiles(of: reels)
+        return reels
+    }
+
+    /// The viewer reached `index`: the batch after it loads now, if it hasn't yet.
+    func loadAhead(from index: Int, of ids: [String], api: InstagramAPI) {
+        guard ids.indices.contains(index) else { return }
+        let batch = ids[index...].prefix(3).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+        guard !batch.isEmpty else { return }
+        Task { try? await load(Array(batch), api: api) }
+    }
+
+    /// The item a reel opens on: the first you haven't seen.
+    func startItem(of reel: Reel) -> Media? {
+        let items = reel.items?.elements ?? []
+        return items.first { ($0.takenAt ?? 0) > seen(reel) } ?? items.first
+    }
+
+    /// A story item's files: its picture (for a video, the cover that shows while it starts) and
+    /// its video.
+    static func files(of item: Media) -> [URL] {
+        [item.imageURL(width: StoryViewer.imageWidth), item.isVideo ? item.videoURL : nil].compactMap { $0 }
+    }
+
+    /// Each reel's items from the first you haven't seen, eight at most, in order.
+    private func queueFiles(of reels: [Reel]) {
+        for reel in reels {
+            let items = reel.items?.elements ?? []
+            let start = items.firstIndex { ($0.takenAt ?? 0) > seen(reel) } ?? 0
+            for item in items[start...].prefix(8) {
+                downloads += Self.files(of: item).filter { !downloads.contains($0) }
+            }
+        }
+        runDownloads()
+    }
+
+    /// What the viewer shows next goes first in line.
+    func prioritize(_ items: [Media]) {
+        let urls = items.flatMap(Self.files)
+        guard !urls.isEmpty else { return }
+        downloads.removeAll { urls.contains($0) }
+        downloads.insert(contentsOf: urls, at: 0)
+        urgent.formUnion(urls)
+        runDownloads()
+    }
+
+    /// One file at a time. Loading ahead stops at 30 MB of stories on the phone (videos are most
+    /// of it, a few MB each); what the viewer is about to show still loads.
+    private func runDownloads() {
+        guard !isDownloading else { return }
+        isDownloading = true
+        Task {
+            defer { isDownloading = false }
+            var budget = StoryFiles.aheadBudget - (await Task.detached(priority: .utility) { StoryFiles.shared.bytes }.value)
+            while !downloads.isEmpty {
+                let url = downloads.removeFirst()
+                let isUrgent = urgent.remove(url) != nil
+                guard StoryFiles.shared.file(for: url) == nil, isUrgent || budget > 0 else { continue }
+                if let file = await StoryFiles.shared.download(url) {
+                    budget -= (try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
                 }
             }
         }
@@ -66,7 +171,8 @@ final class StoriesModel {
     }
 
     func seen(_ reel: Reel) -> Double {
-        max(reel.seen ?? 0, seenUpTo[reel.id] ?? 0, loaded[reel.id]?.seen ?? 0)
+        let inTray = tray.first { $0.id == reel.id }?.seen ?? 0
+        return max(reel.seen ?? 0, seenUpTo[reel.id] ?? 0, loaded[reel.id]?.seen ?? 0, inTray)
     }
 
     func ring(for reel: Reel) -> StoryAvatar.Ring {
@@ -87,11 +193,15 @@ final class StoriesModel {
     /// the account has nothing up any more (expired, or just deleted).
     func reel(at index: Int, of ids: [String], api: InstagramAPI) async throws -> Reel? {
         let id = ids[index]
-        if let reel = loaded[id] { return reel }
-        let batch = ids[index...].prefix(3).filter { loaded[$0] == nil }
-        for reel in try await api.stories(userIDs: Array(batch)) {
-            loaded[reel.id] = reel
+        // Already on its way (loading ahead): wait for it, up to five seconds, rather than ask again.
+        var waited = 0
+        while reelsLoading.contains(id), loaded[id] == nil, waited < 50 {
+            try await Task.sleep(for: .milliseconds(100))
+            waited += 1
         }
+        if let reel = loaded[id] { return reel }
+        let batch = ids[index...].prefix(3).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+        try await load(Array(batch.isEmpty ? [id] : batch), api: api)
         if loaded[id] == nil { tray.removeAll { $0.id == id } }
         return loaded[id]
     }
@@ -433,6 +543,9 @@ struct StoryComposer: View {
 /// Full-screen stories: tap the right side for the next item, the left side for the previous,
 /// hold to pause, swipe down to close. Moves on to the next account when one ends. At the bottom,
 /// a field to reply and a heart to like, as on the website.
+///
+/// The story is a 9:16 card under the status bar, with the reply field below it, as in
+/// Instagram's app; on a screen too short for that, it takes the whole screen.
 struct StoryViewer: View {
     let presentation: StoriesModel.Presentation
 
@@ -444,20 +557,32 @@ struct StoryViewer: View {
     @State private var reel: Reel?
     @State private var itemIndex = 0
     @State private var restarts = 0
-    @State private var progress = 0.0
     @State private var isHolding = false
     @State private var touchStart: Date?
+    /// A swipe down, once the finger has clearly gone down: until then a touch is a tap or a
+    /// hold, and the story doesn't move.
+    @State private var isDragging = false
     @State private var dragOffset: CGFloat = 0
-    @State private var player: AVPlayer?
+    @State private var playing: PlayingVideo?
     @State private var error: String?
     /// The current photo or video isn't on screen yet: the bar waits, and a spinner shows.
     @State private var isLoadingMedia = false
     @State private var reply = ""
     @FocusState private var isReplying: Bool
     @State private var confirmingDelete = false
+    /// Sliding away after a swipe down: nothing moves on meanwhile.
+    @State private var isClosing = false
+    /// How far the current item has played. Only the bars read it, every frame.
+    @State private var clock = StoryClock()
 
-    /// Holding a finger down, typing a reply, or deciding whether to delete.
-    private var isPaused: Bool { isHolding || isReplying || confirmingDelete }
+    /// The video on screen, and which item it's for.
+    struct PlayingVideo {
+        let itemID: String
+        let player: AVPlayer
+    }
+
+    /// Holding a finger down, typing a reply, deciding whether to delete, or closing.
+    private var isPaused: Bool { isHolding || isReplying || confirmingDelete || isClosing }
 
     private var isMine: Bool { reel != nil && reel?.id == session.userID }
 
@@ -484,41 +609,17 @@ struct StoryViewer: View {
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                Color.black
-                if let item {
-                    StoryMedia(item: item, player: player)
-                    if isLoadingMedia {
-                        ProgressView().tint(.white).controlSize(.large)
-                    }
-                } else if let error {
-                    Text(error)
-                        .font(Theme.font(14))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.center)
-                        .padding(32)
-                } else {
-                    ProgressView().tint(.white)
-                }
-                // Keeps the header readable on bright stories.
-                LinearGradient(colors: [.black.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: geometry.safeAreaInsets.top + 110)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(false)
-                // Touches anywhere below the header: tap, hold, or swipe down.
-                Color.clear
-                    .contentShape(Rectangle())
-                    .gesture(touches(width: geometry.size.width))
-                VStack(spacing: 10) {
-                    bars
-                    header
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, geometry.safeAreaInsets.top + 6)
+            let card = Self.card(for: geometry)
+            let isFullScreen = card.minY == 0
+            VStack(spacing: 0) {
+                story(width: card.width, headerInset: isFullScreen ? geometry.safeAreaInsets.top : 0)
+                    .frame(width: card.width, height: card.height)
+                    .clipShape(RoundedRectangle(cornerRadius: isFullScreen ? 28 * min(dragOffset / 60, 1) : 10))
+                Spacer(minLength: 0)
             }
+            .padding(.top, card.minY)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .ignoresSafeArea()
-            .clipShape(RoundedRectangle(cornerRadius: dragOffset > 0 ? 28 : 0))
             .scaleEffect(1 - dragProgress * 0.12, anchor: .top)
             .offset(y: dragOffset)
         }
@@ -541,9 +642,72 @@ struct StoryViewer: View {
         .task(id: reelIndex) { await loadReel() }
         .task(id: playKey) { await play() }
         .onChange(of: isPaused) {
-            if isPaused { player?.pause() } else { player?.play() }
+            if isPaused {
+                playing?.player.pause()
+                clock.pause()
+            } else {
+                playing?.player.play()
+                clock.resume()
+            }
         }
-        .onDisappear { player?.pause() }
+        .onDisappear {
+            playing?.player.pause()
+            StoryFiles.shared.clean()
+        }
+    }
+
+    /// Where the story goes: 9:16 and as wide as the screen, under the status bar, with room below
+    /// for the reply field. A screen too short for that gives it all of itself.
+    private static func card(for geometry: GeometryProxy) -> CGRect {
+        let insets = geometry.safeAreaInsets
+        let screen = CGSize(
+            width: geometry.size.width + insets.leading + insets.trailing,
+            height: geometry.size.height + insets.top + insets.bottom
+        )
+        let height = (screen.width * 16 / 9).rounded()
+        if insets.top + height + 50 + insets.bottom <= screen.height {
+            return CGRect(x: 0, y: insets.top, width: screen.width, height: height)
+        }
+        return CGRect(origin: .zero, size: screen)
+    }
+
+    /// The card: the photo or video, the bars and the header on top, and the touch area.
+    private func story(width: CGFloat, headerInset: CGFloat) -> some View {
+        ZStack {
+            Color.black
+            if let item {
+                StoryMedia(item: item, player: playing?.itemID == item.id ? playing?.player : nil)
+                    .equatable()
+                    .id(item.id)
+                if isLoadingMedia {
+                    ProgressView().tint(.white).controlSize(.large)
+                }
+            } else if let error {
+                Text(error)
+                    .font(Theme.font(14))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(32)
+            } else {
+                ProgressView().tint(.white)
+            }
+            // Keeps the header readable on bright stories.
+            LinearGradient(colors: [.black.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
+                .frame(height: headerInset + 110)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+            // Touches anywhere below the header: tap, hold, or swipe down.
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(touches(width: width))
+            VStack(spacing: 10) {
+                StoryBars(count: items.count, current: itemIndex, clock: clock, isRunning: !isPaused && !isLoadingMedia && item != nil)
+                header
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, headerInset + 8)
+        }
     }
 
     private var footer: some View {
@@ -592,20 +756,6 @@ struct StoryViewer: View {
         reply = ""
         isReplying = false
         stories.reply(text, to: item, in: reel, api: session.api)
-    }
-
-    private var bars: some View {
-        HStack(spacing: 3) {
-            ForEach(items.indices, id: \.self) { index in
-                GeometryReader { bar in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.35))
-                        Capsule().fill(.white).frame(width: bar.size.width * fill(index))
-                    }
-                }
-                .frame(height: 2)
-            }
-        }
     }
 
     private var header: some View {
@@ -661,10 +811,6 @@ struct StoryViewer: View {
         }
     }
 
-    private func fill(_ index: Int) -> CGFloat {
-        index < itemIndex ? 1 : index == itemIndex ? progress : 0
-    }
-
     private func touches(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
@@ -672,24 +818,31 @@ struct StoryViewer: View {
                     touchStart = .now
                     isHolding = true
                 }
-                dragOffset = max(0, value.translation.height)
+                let down = value.translation.height
+                if !isDragging, down > 10, down > abs(value.translation.width) {
+                    isDragging = true
+                }
+                // From where the swipe started, so the story doesn't jump under the finger.
+                if isDragging { dragOffset = max(0, down - 10) }
             }
             .onEnded { value in
                 let quick = Date.now.timeIntervalSince(touchStart ?? .now) < 0.25
                 let moved = abs(value.translation.width) > 12 || abs(value.translation.height) > 12
+                let wasDragging = isDragging
                 touchStart = nil
                 isHolding = false
+                isDragging = false
                 if isReplying {
                     // A touch on the story while typing just puts the keyboard away.
                     isReplying = false
                     withAnimation(.snappy(duration: 0.2)) { dragOffset = 0 }
                     return
                 }
-                if value.translation.height > 120 || value.predictedEndTranslation.height > 400 {
+                if wasDragging, value.translation.height > 120 || value.predictedEndTranslation.height > 400 {
                     slideAway()
                     return
                 }
-                withAnimation(.snappy(duration: 0.2)) { dragOffset = 0 }
+                withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
                 // Nothing to move through until the story is on screen.
                 if quick && !moved && reel != nil {
                     if value.location.x < width / 3 { previous() } else { next() }
@@ -699,10 +852,11 @@ struct StoryViewer: View {
 
     /// Off the bottom of the screen, then gone, without the cover's own animation on top.
     private func slideAway() {
-        player?.pause()
-        withAnimation(.easeOut(duration: 0.2)) { dragOffset = 900 }
+        isClosing = true
+        playing?.player.pause()
+        withAnimation(.easeOut(duration: 0.22)) { dragOffset = 1000 }
         Task {
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(220))
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) { stories.presented = nil }
@@ -711,7 +865,6 @@ struct StoryViewer: View {
 
     private func loadReel() async {
         error = nil
-        progress = 0
         if let loaded = stories.loadedReel(presentation.reelIDs[reelIndex]) {
             show(loaded)
             return
@@ -736,74 +889,76 @@ struct StoryViewer: View {
         reel = loaded
     }
 
-    /// Shows the current item once it's loaded, for as long as it lasts, then moves on. The bar
+    /// Shows the current item once it's ready, for as long as it lasts, then moves on. The bar
     /// doesn't move while a photo is loading or a video is buffering.
     private func play() async {
         guard let reel, let item else { return }
-        player?.pause()
-        progress = 0
+        playing?.player.pause()
         var markedSeen = false
         func markSeen(after seconds: Double) {
             guard !markedSeen, seconds >= 1 else { return }
             markedSeen = true
             stories.markSeen(item, in: reel, api: session.api)
         }
+        prepareNext()
 
         if item.isVideo, let url = item.videoURL {
-            let player = AVPlayer(url: url)
-            self.player = player
+            // From the phone when it was loaded ahead, which starts at once; streamed otherwise.
+            let player = AVPlayer(url: StoryFiles.shared.file(for: url) ?? url)
+            playing = PlayingVideo(itemID: item.id, player: player)
+            clock.start(duration: item.videoDuration ?? 15, player: player)
             if !isPaused { player.play() }
-            preloadNext()
-            let expected = max(item.videoDuration ?? 15, 1)
             while true {
                 try? await Task.sleep(for: .milliseconds(50))
                 if Task.isCancelled { return }
                 guard player.currentItem?.status != .failed else { break }
-                let loaded = player.currentItem?.duration.seconds ?? .nan
-                let total = loaded.isFinite && loaded > 0 ? loaded : expected
-                let time = player.currentTime().seconds
-                isLoadingMedia = !isPaused && player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                let waiting = !isPaused && player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+                if waiting != isLoadingMedia { isLoadingMedia = waiting }
                 if isPaused { continue }
-                progress = min(max(time / total, 0), 1)
+                let time = clock.elapsed
                 markSeen(after: time)
-                if time >= total - 0.1 { break }
+                if time >= clock.total - 0.1 { break }
             }
-            isLoadingMedia = false
+            if isLoadingMedia { isLoadingMedia = false }
         } else {
-            player = nil
+            playing = nil
             if let url = item.imageURL(width: Self.imageWidth), ImageCache.shared.cached(url) == nil {
                 isLoadingMedia = true
-                _ = await ImageCache.shared.image(for: url)
+                _ = await ImageCache.shared.image(for: url, store: .stories)
                 isLoadingMedia = false
                 if Task.isCancelled { return }
             }
-            preloadNext()
-            var elapsed = 0.0
-            while elapsed < 5 {
+            clock.start(duration: 5)
+            if !isPaused { clock.resume() }
+            while true {
                 try? await Task.sleep(for: .milliseconds(50))
                 if Task.isCancelled { return }
                 if isPaused { continue }
-                elapsed += 0.05
-                progress = min(elapsed / 5, 1)
-                markSeen(after: elapsed)
+                let time = clock.elapsed
+                markSeen(after: time)
+                if time >= 5 { break }
             }
         }
         next()
     }
 
-    /// The next picture (this account's next item, or the next account's first new one),
-    /// loaded while this one shows.
-    private func preloadNext() {
-        var upcoming: Media?
-        if itemIndex + 1 < items.count {
-            upcoming = items[itemIndex + 1]
-        } else if reelIndex + 1 < presentation.reelIDs.count, let nextReel = stories.loadedReel(presentation.reelIDs[reelIndex + 1]) {
-            let elements = nextReel.items?.elements ?? []
-            let seen = stories.seen(nextReel)
-            upcoming = elements.first { ($0.takenAt ?? 0) > seen } ?? elements.first
+    /// What comes next, ready before it's needed: this account's next two items and the next
+    /// account's first new one go first in line for the phone, and the next picture is decoded.
+    /// The next accounts' stories load now if they haven't yet.
+    private func prepareNext() {
+        var upcoming = Array(items.dropFirst(itemIndex + 1).prefix(2))
+        let nextIndex = reelIndex + 1
+        if presentation.reelIDs.indices.contains(nextIndex) {
+            if let nextReel = stories.loadedReel(presentation.reelIDs[nextIndex]) {
+                if let first = stories.startItem(of: nextReel) { upcoming.append(first) }
+            } else {
+                stories.loadAhead(from: nextIndex, of: presentation.reelIDs, api: session.api)
+            }
         }
-        guard let url = upcoming?.imageURL(width: Self.imageWidth) else { return }
-        Task { _ = await ImageCache.shared.image(for: url) }
+        stories.prioritize(upcoming)
+        if let url = upcoming.first?.imageURL(width: Self.imageWidth) {
+            Task { _ = await ImageCache.shared.image(for: url, store: .stories) }
+        }
     }
 
     private func next() {
@@ -829,6 +984,81 @@ struct StoryViewer: View {
             reelIndex -= 1
         } else {
             restarts += 1
+        }
+    }
+}
+
+/// How far the current item has played: a video's own time, or how long a photo has been on screen
+/// without counting pauses. The bars read it every frame; it isn't observed, so the viewer doesn't
+/// redraw with it.
+@MainActor
+final class StoryClock {
+    private var player: AVPlayer?
+    private var duration: Double = 5
+    private var shown: Double = 0
+    private var resumedAt: Date?
+
+    /// A new item, paused: a photo, or a video with its player.
+    func start(duration: Double, player: AVPlayer? = nil) {
+        self.player = player
+        self.duration = max(duration, 0.1)
+        shown = 0
+        resumedAt = nil
+    }
+
+    func resume() {
+        if resumedAt == nil { resumedAt = .now }
+    }
+
+    func pause() {
+        if let resumedAt { shown += Date.now.timeIntervalSince(resumedAt) }
+        resumedAt = nil
+    }
+
+    /// Seconds played so far.
+    var elapsed: Double { elapsed(at: .now) }
+
+    /// The video's length once it's known, otherwise the length expected.
+    var total: Double {
+        if let seconds = player?.currentItem?.duration.seconds, seconds.isFinite, seconds > 0 { return seconds }
+        return duration
+    }
+
+    func fraction(at date: Date) -> Double {
+        min(max(elapsed(at: date) / total, 0), 1)
+    }
+
+    private func elapsed(at date: Date) -> Double {
+        if let player {
+            let seconds = player.currentTime().seconds
+            return seconds.isFinite ? seconds : 0
+        }
+        return shown + (resumedAt.map { date.timeIntervalSince($0) } ?? 0)
+    }
+}
+
+/// One bar per item, the current one filling as it plays: redrawn every frame on their own, so
+/// the story under them doesn't redraw with them.
+private struct StoryBars: View {
+    let count: Int
+    let current: Int
+    let clock: StoryClock
+    let isRunning: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: nil, paused: !isRunning)) { context in
+            let progress = clock.fraction(at: context.date)
+            HStack(spacing: 3) {
+                ForEach(0..<count, id: \.self) { index in
+                    let fill: CGFloat = index < current ? 1 : index == current ? progress : 0
+                    Capsule()
+                        .fill(.white.opacity(0.35))
+                        .overlay(alignment: .leading) {
+                            Capsule().fill(.white).scaleEffect(x: fill, y: 1, anchor: .leading)
+                        }
+                        .frame(height: 2)
+                }
+            }
         }
     }
 }
@@ -893,42 +1123,66 @@ struct StoryPostToast: View {
     }
 }
 
-/// A story photo or video, filling the screen.
-private struct StoryMedia: View {
+/// A story photo or video in the card: filling it when it's 9:16, as nearly all stories are, and
+/// fitted on black otherwise. Equatable, so the viewer redrawing (a swipe, the reply field)
+/// leaves it alone.
+private struct StoryMedia: View, Equatable {
     let item: Media
     let player: AVPlayer?
 
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.item.id == rhs.item.id && lhs.player === rhs.player
+    }
+
+    private var fills: Bool {
+        guard let shape = item.shape else { return true }
+        return abs(shape - 9 / 16) / (9 / 16) < 0.08
+    }
+
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                RemoteImage(item.imageURL(width: StoryViewer.imageWidth), placeholder: .black)
-                if item.isVideo, let player {
-                    PlayerLayer(player: player)
-                }
+        ZStack {
+            RemoteImage(
+                item.imageURL(width: StoryViewer.imageWidth), placeholder: .black, contentMode: fills ? .fill : .fit,
+                store: .stories
+            )
+            if item.isVideo, let player {
+                PlayerLayer(player: player, gravity: fills ? .resizeAspectFill : .resizeAspect)
             }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .clipped()
         }
+        .clipped()
     }
 }
 
-/// A video without controls, filling its frame.
+/// A video without controls. Hidden until its first frame is ready, so the cover under it shows
+/// instead of black.
 private struct PlayerLayer: UIViewRepresentable {
     let player: AVPlayer
+    var gravity = AVLayerVideoGravity.resizeAspectFill
 
     func makeUIView(context: Context) -> PlayerView {
         let view = PlayerView()
-        view.playerLayer.videoGravity = .resizeAspectFill
-        view.playerLayer.player = player
+        view.playerLayer.videoGravity = gravity
+        view.show(player)
         return view
     }
 
     func updateUIView(_ view: PlayerView, context: Context) {
-        view.playerLayer.player = player
+        view.playerLayer.videoGravity = gravity
+        if view.playerLayer.player !== player { view.show(player) }
     }
 
     final class PlayerView: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        private var readiness: NSKeyValueObservation?
+
+        func show(_ player: AVPlayer) {
+            playerLayer.player = player
+            isHidden = !playerLayer.isReadyForDisplay
+            readiness = playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] layer, _ in
+                let isReady = layer.isReadyForDisplay
+                DispatchQueue.main.async { self?.isHidden = !isReady }
+            }
+        }
     }
 }

@@ -7,7 +7,7 @@
 - **Comet GET.** A few website calls, such as Direct search, are GETs that need the page's `async_get_token` and the website's full set of parameters. `cometGET` in InstagramAPI.swift sends them the way the website's `cometAsyncFetch` does.
 - **Home** asks for the website's Following feed (`instagram.com/?variant=following`). The default ranked feed turned out to be mostly reels, Explore suggestions and ads.
 - **Models.** Responses decode into [Models.swift](../Unreeled/API/Models.swift), where nearly every field is optional, so a field Instagram drops doesn't break a screen.
-- **Screens** are in [Views](../Unreeled/Views). Images go through a small in-memory cache on top of URLCache, so scrolling back is instant.
+- **Screens** are in [Views](../Unreeled/Views). Images are kept decoded in memory and as files on the phone (`ImageCache` and `ImageFiles`), both keyed by the picture's path on the CDN and its size (`stp`), never by the full link: Instagram signs each link anew in every response.
 - **Web screens** ([WebScreen.swift](../Unreeled/Web/WebScreen.swift)) inject [Filter.js](../Unreeled/Web/Filter.js) with [Rules.json](../Unreeled/Web/Rules.json). Links to other sites open in Safari, and links that would open Instagram's app are ignored.
 
 ## Endpoints, and how each was tested
