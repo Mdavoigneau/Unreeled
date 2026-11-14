@@ -13,6 +13,11 @@
 
   Opened in a browser, after `build.py voice` and `build.py sound`, it plays with a slider.
 
+  It draws two shapes of the same video: wide, for the website, and tall, for a phone held
+  upright (the app), when the build sets window.FORMAT to "tall". An element says where it goes in
+  the tall one in data-tall (a path, in data-tall-d), a headline where it breaks there with
+  <br class="t">, and the script picks between two numbers where it places things itself.
+
   The look is the app's and the website's (src/style.css): white, hairlines, Helvetica Neue, one
   steel blue. No logos but Unreeled's own; the icons are drawn here.
 -->
@@ -91,6 +96,15 @@ body { overflow: hidden; }
 .rows li + li { border-top: 2px solid var(--field); }
 .rows .ic { flex: none; width: 34px; height: 34px; stroke-width: 2; }
 
+/* The tall shape: 1080 by 1800, for a phone held upright. */
+#stage.tall { width: 1080px; height: 1800px; }
+#stage.tall .wires { width: 1080px; height: 1800px; }
+#stage.tall .headline { left: 50px; right: 50px; font-size: 62px; }
+#stage.tall #bar .icon { left: 48px; }
+#stage.tall #bar .wordmark { left: 122px; }
+#stage.tall #bar .chapter { right: 48px; }
+#stage.tall .rows li { font-size: 34px; }
+
 /* Only when looked at in a browser. */
 #controls { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: rgba(38, 38, 38, 0.92); color: #FFFFFF; font: 14px "Helvetica Neue", sans-serif; }
 #controls input { flex: 1; }
@@ -102,16 +116,16 @@ body { overflow: hidden; }
 
 <!-- 1. The title -->
 <section class="scene" id="title">
-  <img class="a" id="title-icon" src="../public/images/icon-384.png" alt="" style="left:850px;top:240px;width:220px;height:220px">
-  <img class="a" id="title-wordmark" src="../public/images/wordmark.svg" alt="Unreeled" style="left:690px;top:492px;width:540px;height:110.5px">
-  <div class="a" id="title-tag" style="left:0;right:0;top:642px;text-align:center;color:var(--secondary);font-size:40px">An open-source app for Instagram</div>
-  <div class="a" id="title-how" style="left:0;right:0;top:730px;text-align:center;font-size:68px;font-weight:300;letter-spacing:-0.01em">How it keeps your account private</div>
+  <img class="a" id="title-icon" data-tall="left:430px;top:600px" src="../public/images/icon-384.png" alt="" style="left:850px;top:240px;width:220px;height:220px">
+  <img class="a" id="title-wordmark" data-tall="left:270px;top:860px" src="../public/images/wordmark.svg" alt="Unreeled" style="left:690px;top:492px;width:540px;height:110.5px">
+  <div class="a" id="title-tag" data-tall="top:1010px" style="left:0;right:0;top:642px;text-align:center;color:var(--secondary);font-size:40px">An open-source app for Instagram</div>
+  <div class="a" id="title-how" data-tall="top:1100px;font-size:62px" style="left:0;right:0;top:730px;text-align:center;font-size:68px;font-weight:300;letter-spacing:-0.01em">How it keeps your account private</div>
 </section>
 
 <!-- 2. Logging in -->
 <section class="scene" id="login">
-  <h1 class="headline">You log in on Instagram's own page</h1>
-  <div class="phone" id="login-phone" style="left:420px;top:330px">
+  <h1 class="headline">You log in on<br class="t"> Instagram's own page</h1>
+  <div class="phone" id="login-phone" data-tall="left:390px;top:500px" style="left:420px;top:330px">
     <div class="screen">
       <div class="island"></div>
       <div class="a center" id="login-address" style="left:20px;right:20px;top:52px;height:42px;gap:8px;border-radius:21px;background:var(--field);font-size:21px">
@@ -123,11 +137,11 @@ body { overflow: hidden; }
       <div class="a center" style="left:22px;right:22px;top:318px;height:48px;border-radius:8px;background:var(--accent);color:#FFFFFF;font-size:20px;font-weight:500">Log in</div>
     </div>
   </div>
-  <div class="point" id="login-own" style="left:850px;top:440px">
+  <div class="point" id="login-own" data-tall="left:130px;top:1200px" style="left:850px;top:440px">
     <svg class="ic" data-i="checkCircle" style="flex:none;width:76px;height:76px;color:var(--accent)"></svg>
     <div><b>Instagram's own login page</b><span>shown inside the app</span></div>
   </div>
-  <div class="point" id="login-never" style="left:850px;top:640px">
+  <div class="point" id="login-never" data-tall="left:130px;top:1390px" style="left:850px;top:640px">
     <div class="struck" style="width:76px;height:76px">
       <svg class="ic" data-i="eye" style="width:76px;height:76px"></svg>
       <svg class="slash" viewBox="0 0 24 24"><path class="draw" id="login-slash" pathLength="1" d="M3.5 3.5l17 17"/></svg>
@@ -138,48 +152,48 @@ body { overflow: hidden; }
 
 <!-- 3. Straight to Instagram -->
 <section class="scene" id="direct">
-  <h1 class="headline">Your phone talks straight to Instagram</h1>
+  <h1 class="headline">Your phone talks<br class="t"> straight to Instagram</h1>
   <svg class="wires" viewBox="0 0 1920 1080">
-    <path class="draw" id="direct-out" pathLength="1" d="M580 608H1310" stroke="var(--accent)" stroke-width="4"/>
-    <path class="draw" id="direct-back" pathLength="1" d="M1310 662H580" stroke="var(--accent)" stroke-width="4"/>
-    <path id="direct-out-head" d="M1294 592l18 16-18 16" stroke="var(--accent)" stroke-width="4"/>
-    <path id="direct-back-head" d="M596 646l-18 16 18 16" stroke="var(--accent)" stroke-width="4"/>
-    <path class="draw" id="direct-stub" pathLength="1" d="M945 676V790" stroke="var(--secondary)" stroke-width="3" stroke-dasharray="0.09 0.09"/>
+    <path class="draw" id="direct-out" data-tall-d="M500 1040V1400" pathLength="1" d="M580 608H1310" stroke="var(--accent)" stroke-width="4"/>
+    <path class="draw" id="direct-back" data-tall-d="M580 1400V1040" pathLength="1" d="M1310 662H580" stroke="var(--accent)" stroke-width="4"/>
+    <path id="direct-out-head" data-tall-d="M484 1384l16 18 16-18" d="M1294 592l18 16-18 16" stroke="var(--accent)" stroke-width="4"/>
+    <path id="direct-back-head" data-tall-d="M564 1056l16-18 16 18" d="M596 646l-18 16 18 16" stroke="var(--accent)" stroke-width="4"/>
+    <path class="draw" id="direct-stub" data-tall-d="M598 1220H680" pathLength="1" d="M945 676V790" stroke="var(--secondary)" stroke-width="3" stroke-dasharray="0.09 0.09"/>
   </svg>
-  <div class="phone" id="direct-phone" style="left:250px;top:330px">
+  <div class="phone" id="direct-phone" data-tall="left:390px;top:410px" style="left:250px;top:330px">
     <div class="screen" id="direct-feed">
       <div class="island"></div>
     </div>
   </div>
-  <div class="node" id="direct-instagram" style="left:1330px;top:535px;width:340px;height:200px">Instagram<small>instagram.com</small></div>
+  <div class="node" id="direct-instagram" data-tall="left:370px;top:1420px;height:190px" style="left:1330px;top:535px;width:340px;height:200px">Instagram<small>instagram.com</small></div>
   <div id="direct-tokens"></div>
-  <div class="a" id="direct-ours" style="left:785px;top:790px;width:320px;height:112px">
+  <div class="a" id="direct-ours" data-tall="left:680px;top:1164px" style="left:785px;top:790px;width:320px;height:112px">
     <div class="a center" style="inset:0;gap:16px;border:3px dashed var(--secondary);border-radius:20px;background:#FFFFFF;color:var(--secondary);font-size:30px">
       <svg class="ic" data-i="server" style="width:44px;height:44px"></svg>A server of ours
     </div>
     <svg class="slash a" viewBox="0 0 320 112" style="inset:0;width:320px;height:112px;stroke-width:6"><path class="draw" id="direct-strike" pathLength="1" d="M22 96L298 16"/></svg>
   </div>
-  <div class="a" id="direct-none" style="left:645px;top:505px;width:600px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">Nothing in between</div>
+  <div class="a" id="direct-none" data-tall="left:80px;top:1198px;width:360px;text-align:right" style="left:645px;top:505px;width:600px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">Nothing in between</div>
 </section>
 
 <!-- 4. Collects nothing -->
 <section class="scene" id="nothing">
-  <h1 class="headline">Unreeled collects <span id="nothing-word" style="position:relative;display:inline-block">nothing<svg class="a" viewBox="0 0 100 10" preserveAspectRatio="none" style="left:0;bottom:-10px;width:100%;height:12px;fill:none;stroke:var(--accent);stroke-width:3;overflow:visible"><path id="nothing-line" d="M1 6C30 2 70 2 99 6" vector-effect="non-scaling-stroke" stroke-width="5" stroke-linecap="round"/></svg></span> about you</h1>
+  <h1 class="headline">Unreeled collects<br class="t"> <span id="nothing-word" style="position:relative;display:inline-block">nothing<svg class="a" viewBox="0 0 100 10" preserveAspectRatio="none" style="left:0;bottom:-10px;width:100%;height:12px;fill:none;stroke:var(--accent);stroke-width:3;overflow:visible"><path id="nothing-line" d="M1 6C30 2 70 2 99 6" vector-effect="non-scaling-stroke" stroke-width="5" stroke-linecap="round"/></svg></span> about you</h1>
   <div id="nothing-cards"></div>
 </section>
 
 <!-- 5. The one download -->
 <section class="scene" id="list">
-  <h1 class="headline">One download, signed by the project</h1>
+  <h1 class="headline">One download,<br class="t"> signed by the project</h1>
   <svg class="wires" viewBox="0 0 1920 1080">
-    <path class="draw" id="list-wire" pathLength="1" d="M1320 635H580" stroke="var(--hairline)" stroke-width="4"/>
+    <path class="draw" id="list-wire" data-tall-d="M540 548V992" pathLength="1" d="M1320 635H580" stroke="var(--hairline)" stroke-width="4"/>
   </svg>
-  <div class="phone" id="list-phone" style="left:250px;top:330px">
+  <div class="phone" id="list-phone" data-tall="left:390px;top:1000px" style="left:250px;top:330px">
     <div class="screen"><div class="island"></div>
       <div class="a center" style="left:0;right:0;top:230px"><img src="../public/images/icon-384.png" alt="" style="width:96px;height:96px"></div>
     </div>
   </div>
-  <div class="node" id="list-site" style="left:1330px;top:535px;width:340px;height:200px">unreeled.app<small>the project</small></div>
+  <div class="node" id="list-site" data-tall="left:370px;top:350px;height:190px" style="left:1330px;top:535px;width:340px;height:200px">unreeled.app<small>the project</small></div>
   <div class="a" id="list-fake" style="left:0;top:0;width:150px;height:190px">
     <div class="a" style="inset:0;border:3px dashed var(--secondary);border-radius:14px;background:#FFFFFF"></div>
     <div class="a center" style="inset:0;color:var(--secondary);font-size:84px;font-weight:300">?</div>
@@ -195,20 +209,20 @@ body { overflow: hidden; }
       <svg class="ic" data-i="check" style="width:50px;height:50px;stroke-width:2.6"></svg>
     </div>
   </div>
-  <div class="a" id="list-what" style="left:560px;top:770px;width:800px;text-align:center;font-size:34px;font-weight:500">The list of Instagram's request IDs</div>
-  <div class="a" id="list-signed" style="left:560px;top:820px;width:800px;text-align:center;font-size:30px;color:var(--accent-dark)">signed by the project</div>
-  <div class="pill" id="list-ok" style="left:600px;top:500px;width:300px;height:58px;border-color:var(--accent);background:var(--accent);color:#FFFFFF">
+  <div class="a" id="list-what" data-tall="left:60px;top:724px;width:380px;text-align:right" style="left:560px;top:770px;width:800px;text-align:center;font-size:34px;font-weight:500">The list of Instagram's<br class="t"> request IDs</div>
+  <div class="a" id="list-signed" data-tall="left:650px;top:746px;width:380px;text-align:left" style="left:560px;top:820px;width:800px;text-align:center;font-size:30px;color:var(--accent-dark)">signed by the project</div>
+  <div class="pill" id="list-ok" data-tall="left:710px;top:1090px" style="left:600px;top:500px;width:300px;height:58px;border-color:var(--accent);background:var(--accent);color:#FFFFFF">
     <svg class="ic" data-i="check" style="width:28px;height:28px;stroke-width:2.6"></svg>Signature checked
   </div>
-  <div class="pill" id="list-no" style="left:790px;top:821px;width:330px;height:58px;border-color:var(--no);color:var(--no)">
+  <div class="pill" id="list-no" data-tall="left:705px;top:1500px" style="left:790px;top:821px;width:330px;height:58px;border-color:var(--no);color:var(--no)">
     <svg class="ic" data-i="x" style="width:26px;height:26px;stroke-width:2.6"></svg>Not signed: refused
   </div>
 </section>
 
 <!-- 6. Logging out -->
 <section class="scene" id="logout">
-  <h1 class="headline">Log out, and it's deleted from your phone</h1>
-  <div class="phone" id="logout-phone" style="left:470px;top:330px">
+  <h1 class="headline">Log out, and it's deleted<br class="t"> from your phone</h1>
+  <div class="phone" id="logout-phone" data-tall="left:390px;top:490px" style="left:470px;top:330px">
     <div class="screen" id="logout-tiles"><div class="island"></div></div>
   </div>
   <div id="logout-rows"></div>
@@ -217,40 +231,40 @@ body { overflow: hidden; }
 <!-- 7. Notifications are a choice -->
 <section class="scene" id="notifications">
   <h1 class="headline">Notifications are optional</h1>
-  <div class="a" id="notifications-row" style="left:510px;top:322px;width:900px;height:132px;border:3px solid var(--ink);border-radius:24px;background:#FFFFFF">
+  <div class="a" id="notifications-row" data-tall="left:90px;top:470px" style="left:510px;top:322px;width:900px;height:132px;border:3px solid var(--ink);border-radius:24px;background:#FFFFFF">
     <svg class="ic a" data-i="bell" style="left:38px;top:36px;width:60px;height:60px;color:var(--accent)"></svg>
     <div class="a" style="left:124px;top:24px;font-size:42px;font-weight:500">Notifications</div>
     <div class="a" style="left:124px;top:78px;font-size:27px;color:var(--secondary)">Off unless you turn them on</div>
     <div class="switch" id="notifications-switch" style="right:36px;top:33px;width:116px;height:66px"><i style="left:5px;top:5px;width:56px;height:56px"></i></div>
   </div>
   <svg class="wires" viewBox="0 0 1920 1080">
-    <path class="draw" id="notifications-in" pathLength="1" d="M650 700H790" stroke="var(--ink)" stroke-width="4"/>
-    <path id="notifications-in-head" d="M774 684l18 16-18 16" stroke="var(--ink)" stroke-width="4"/>
-    <path class="draw" id="notifications-on" pathLength="1" d="M1130 700H1270" stroke="var(--ink)" stroke-width="4"/>
-    <path id="notifications-on-head" d="M1254 684l18 16-18 16" stroke="var(--ink)" stroke-width="4"/>
+    <path class="draw" id="notifications-in" data-tall-d="M540 908V1012" pathLength="1" d="M650 700H790" stroke="var(--ink)" stroke-width="4"/>
+    <path id="notifications-in-head" data-tall-d="M524 996l16 18 16-18" d="M774 684l18 16-18 16" stroke="var(--ink)" stroke-width="4"/>
+    <path class="draw" id="notifications-on" data-tall-d="M540 1178V1282" pathLength="1" d="M1130 700H1270" stroke="var(--ink)" stroke-width="4"/>
+    <path id="notifications-on-head" data-tall-d="M524 1266l16 18 16-18" d="M1254 684l18 16-18 16" stroke="var(--ink)" stroke-width="4"/>
   </svg>
-  <div class="node" id="notifications-instagram" style="left:350px;top:620px;width:300px;height:160px">Instagram</div>
-  <div class="node" id="notifications-relay" style="left:810px;top:620px;width:300px;height:160px;border-color:var(--accent);background:var(--wash);color:var(--accent-dark)">Unreeled's<br>relay</div>
-  <div class="node" id="notifications-phone" style="left:1270px;top:620px;width:300px;height:160px">Your phone</div>
-  <div class="badge" id="notifications-blind" style="left:912px;top:508px;width:96px;height:96px;border:3px solid var(--ink)">
+  <div class="node" id="notifications-instagram" data-tall="left:390px;top:750px;height:150px" style="left:350px;top:620px;width:300px;height:160px">Instagram</div>
+  <div class="node" id="notifications-relay" data-tall="left:390px;top:1020px;height:150px" style="left:810px;top:620px;width:300px;height:160px;border-color:var(--accent);background:var(--wash);color:var(--accent-dark)">Unreeled's<br>relay</div>
+  <div class="node" id="notifications-phone" data-tall="left:390px;top:1290px;height:150px" style="left:1270px;top:620px;width:300px;height:160px">Your phone</div>
+  <div class="badge" id="notifications-blind" data-tall="left:730px;top:1047px" style="left:912px;top:508px;width:96px;height:96px;border:3px solid var(--ink)">
     <div class="struck" style="width:56px;height:56px">
       <svg class="ic" data-i="eye" style="width:56px;height:56px"></svg>
       <svg class="slash" viewBox="0 0 24 24"><path class="draw" id="notifications-slash" pathLength="1" d="M3.5 3.5l17 17"/></svg>
     </div>
   </div>
-  <div class="a" id="notifications-cant" style="left:660px;top:812px;width:600px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">It passes them on. It can't read them.</div>
+  <div class="a" id="notifications-cant" data-tall="left:90px;top:1510px;width:900px" style="left:660px;top:812px;width:600px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">It passes them on. It can't read them.</div>
 </section>
 
 <!-- 8 and 9. The keys, then the way a notification takes -->
 <section class="scene" id="chain">
-  <h1 class="headline" id="chain-headline-keys">The private key never leaves your phone</h1>
-  <h1 class="headline" id="chain-headline-path">Encrypted for your phone, all the way</h1>
+  <h1 class="headline" id="chain-headline-keys">The private key never<br class="t"> leaves your phone</h1>
+  <h1 class="headline" id="chain-headline-path">Encrypted for your phone,<br class="t"> all the way</h1>
   <svg class="wires" viewBox="0 0 1920 1080" id="chain-wires"></svg>
-  <div class="node" id="chain-instagram" style="left:110px;top:555px;width:280px;height:170px">Instagram</div>
-  <div class="node" id="chain-mozilla" style="left:470px;top:555px;width:250px;height:170px;font-size:30px">Mozilla's<br>push service</div>
-  <div class="node" id="chain-relay" style="left:800px;top:555px;width:250px;height:170px;font-size:30px;border-color:var(--accent);background:var(--wash);color:var(--accent-dark)">Unreeled's<br>relay</div>
-  <div class="node" id="chain-apple" style="left:1130px;top:555px;width:250px;height:170px;font-size:30px">Apple's<br>push service</div>
-  <div class="phone" id="chain-phone" style="left:1510px;top:335px">
+  <div class="node" id="chain-instagram" data-tall="left:380px;top:330px;width:320px;height:120px" style="left:110px;top:555px;width:280px;height:170px">Instagram</div>
+  <div class="node" id="chain-mozilla" data-tall="left:380px;top:510px;width:320px;height:120px" style="left:470px;top:555px;width:250px;height:170px;font-size:30px">Mozilla's<br>push service</div>
+  <div class="node" id="chain-relay" data-tall="left:380px;top:690px;width:320px;height:120px" style="left:800px;top:555px;width:250px;height:170px;font-size:30px;border-color:var(--accent);background:var(--wash);color:var(--accent-dark)">Unreeled's<br>relay</div>
+  <div class="node" id="chain-apple" data-tall="left:380px;top:870px;width:320px;height:120px" style="left:1130px;top:555px;width:250px;height:170px;font-size:30px">Apple's<br>push service</div>
+  <div class="phone" id="chain-phone" data-tall="left:390px;top:1060px" style="left:1510px;top:335px">
     <div class="screen">
       <div class="island"></div>
       <div class="a" id="chain-clock" style="left:0;right:0;top:70px;text-align:center;font-size:76px;font-weight:200;line-height:1">9:41</div>
@@ -269,13 +283,13 @@ body { overflow: hidden; }
       <svg class="ic a" id="chain-private" data-i="keySolid" style="left:40px;top:210px;width:86px;height:86px"></svg>
     </div>
   </div>
-  <div class="a" id="chain-callout" style="left:980px;top:792px;width:500px;text-align:right">
+  <div class="a" id="chain-callout" data-tall="left:30px;top:1500px;width:340px" style="left:980px;top:792px;width:500px;text-align:right">
     <div style="font-size:40px;font-weight:500">The private key</div>
     <div style="margin-top:6px;font-size:30px;color:var(--secondary)">stays in the phone's Keychain</div>
   </div>
   <div class="pill" id="chain-pill-key" style="left:0;top:0;width:280px;height:58px"><svg class="ic" data-i="key" style="width:30px;height:30px;stroke-width:2"></svg>Public key</div>
   <div class="pill" id="chain-pill-address" style="left:0;top:0;width:280px;height:58px"><svg class="ic" data-i="pin" style="width:28px;height:28px;stroke-width:2"></svg>Push address</div>
-  <div class="a" id="chain-browser" style="left:30px;top:888px;width:440px;text-align:center;font-size:27px;color:var(--secondary)">from your own login,<br>as a browser does</div>
+  <div class="a" id="chain-browser" data-tall="left:730px;top:482px;width:300px;text-align:left" style="left:30px;top:888px;width:440px;text-align:center;font-size:27px;color:var(--secondary)">from your own login,<br>as a browser does</div>
   <div id="chain-nokeys"></div>
   <div class="a" id="chain-parcel" style="left:0;top:0;width:260px;height:80px">
     <div class="a center" id="chain-bubble" style="inset:0;border:3px solid var(--ink);border-radius:26px;background:#FFFFFF;font-size:30px">See you at 8?</div>
@@ -283,26 +297,26 @@ body { overflow: hidden; }
       <svg class="ic" data-i="lock" style="width:34px;height:34px;stroke-width:2"></svg>9f·3a·c2·7e
     </div>
   </div>
-  <div class="a" id="chain-ring" style="left:1500px;top:325px;width:320px;height:630px;border:5px solid var(--accent);border-radius:64px"></div>
-  <div class="a" id="chain-only" style="left:1410px;top:252px;width:500px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">Only your phone can read it</div>
+  <div class="a" id="chain-ring" data-tall="left:380px;top:1050px" style="left:1500px;top:325px;width:320px;height:630px;border:5px solid var(--accent);border-radius:64px"></div>
+  <div class="a" id="chain-only" data-tall="left:722px;top:1262px;width:320px;text-align:left" style="left:1410px;top:252px;width:500px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">Only your phone<br class="t"> can read it</div>
 </section>
 
 <!-- 10. What the relay knows -->
 <section class="scene" id="relay">
   <h1 class="headline">What the relay knows</h1>
-  <div class="card" id="relay-keeps" style="left:120px;top:322px;width:600px;height:462px;border-color:var(--accent)">
+  <div class="card" id="relay-keeps" data-tall="left:140px;top:330px;width:800px" style="left:120px;top:322px;width:600px;height:462px;border-color:var(--accent)">
     <header style="color:var(--accent-dark)"><svg class="ic" data-i="server" style="width:46px;height:46px"></svg>It keeps</header>
     <ul class="rows" data-icon="dot" data-color="var(--accent)">
       <li>A random ID</li><li>Your phone's address at Apple</li><li>The push address</li><li>When your phone was last seen</li>
     </ul>
   </div>
-  <div class="card" id="relay-sees" style="left:750px;top:322px;width:500px;height:294px">
+  <div class="card" id="relay-sees" data-tall="left:140px;top:822px;width:800px" style="left:750px;top:322px;width:500px;height:294px">
     <header><svg class="ic" data-i="eye" style="width:46px;height:46px"></svg>It sees</header>
     <ul class="rows" data-icon="dot" data-color="var(--ink)">
       <li>When a notification passes</li><li>How large it is</li>
     </ul>
   </div>
-  <div class="card" id="relay-never" style="left:1280px;top:322px;width:520px;height:462px">
+  <div class="card" id="relay-never" data-tall="left:140px;top:1146px;width:800px" style="left:1280px;top:322px;width:520px;height:462px">
     <header>
       <div class="struck" style="width:46px;height:46px"><svg class="ic" data-i="eye" style="width:46px;height:46px"></svg><svg class="slash" viewBox="0 0 24 24"><path d="M3.5 3.5l17 17"/></svg></div>Never
     </header>
@@ -314,9 +328,9 @@ body { overflow: hidden; }
 
 <!-- 11. Turning them off -->
 <section class="scene" id="off">
-  <h1 class="headline">Turn them off, and the relay forgets you</h1>
+  <h1 class="headline">Turn them off, and<br class="t"> the relay forgets you</h1>
   <svg class="wires" viewBox="0 0 1920 1080">
-    <path class="draw" id="off-wire" pathLength="1" d="M700 610H960" stroke="var(--hairline)" stroke-width="4"/>
+    <path class="draw" id="off-wire" data-tall-d="M540 950V1082" pathLength="1" d="M700 610H960" stroke="var(--hairline)" stroke-width="4"/>
   </svg>
   <div class="pill" id="off-forget" style="left:0;top:0;width:240px;height:56px">Forget this phone</div>
   <div class="phone" id="off-phone" style="left:390px;top:330px">
@@ -331,7 +345,7 @@ body { overflow: hidden; }
       </div>
     </div>
   </div>
-  <div class="card" id="off-relay" style="left:970px;top:330px;width:580px;height:462px;border-color:var(--accent)">
+  <div class="card" id="off-relay" data-tall="left:160px;top:1090px;width:760px" style="left:970px;top:330px;width:580px;height:462px;border-color:var(--accent)">
     <header style="color:var(--accent-dark)"><svg class="ic" data-i="server" style="width:46px;height:46px"></svg>Unreeled's relay</header>
     <ul class="rows" data-icon="dot" data-color="var(--accent)">
       <li>A random ID</li><li>Your phone's address at Apple</li><li>The push address</li><li>When your phone was last seen</li>
@@ -342,13 +356,13 @@ body { overflow: hidden; }
 
 <!-- 12. In the open -->
 <section class="scene" id="open">
-  <h1 class="headline">Open source, for anyone to check</h1>
-  <div class="card" id="open-app" style="left:290px;top:322px;width:640px;height:440px"><header>The app<small style="margin-left:auto;color:var(--secondary);font-size:26px;font-weight:400">Swift</small></header><div class="code"></div></div>
-  <div class="card" id="open-relay" style="left:990px;top:322px;width:640px;height:440px"><header>The relay<small style="margin-left:auto;color:var(--secondary);font-size:26px;font-weight:400">JavaScript</small></header><div class="code"></div></div>
-  <div class="badge" id="open-ok-app" style="left:894px;top:290px;width:68px;height:68px;background:var(--accent);color:#FFFFFF"><svg class="ic" data-i="check" style="width:38px;height:38px;stroke-width:2.6"></svg></div>
-  <div class="badge" id="open-ok-relay" style="left:1594px;top:290px;width:68px;height:68px;background:var(--accent);color:#FFFFFF"><svg class="ic" data-i="check" style="width:38px;height:38px;stroke-width:2.6"></svg></div>
+  <h1 class="headline">Open source,<br class="t"> for anyone to check</h1>
+  <div class="card" id="open-app" data-tall="left:220px;top:500px;height:420px" style="left:290px;top:322px;width:640px;height:440px"><header>The app<small style="margin-left:auto;color:var(--secondary);font-size:26px;font-weight:400">Swift</small></header><div class="code"></div></div>
+  <div class="card" id="open-relay" data-tall="left:220px;top:960px;height:420px" style="left:990px;top:322px;width:640px;height:440px"><header>The relay<small style="margin-left:auto;color:var(--secondary);font-size:26px;font-weight:400">JavaScript</small></header><div class="code"></div></div>
+  <div class="badge" id="open-ok-app" data-tall="left:824px;top:468px" style="left:894px;top:290px;width:68px;height:68px;background:var(--accent);color:#FFFFFF"><svg class="ic" data-i="check" style="width:38px;height:38px;stroke-width:2.6"></svg></div>
+  <div class="badge" id="open-ok-relay" data-tall="left:824px;top:928px" style="left:1594px;top:290px;width:68px;height:68px;background:var(--accent);color:#FFFFFF"><svg class="ic" data-i="check" style="width:38px;height:38px;stroke-width:2.6"></svg></div>
   <svg class="ic a" id="open-glass" data-i="search" style="left:0;top:0;width:150px;height:150px;stroke-width:1.3;color:var(--accent)"></svg>
-  <div class="a center" id="open-where" style="left:0;right:0;top:806px;gap:24px;font:400 36px Menlo, monospace">
+  <div class="a center" id="open-where" data-tall="top:1450px" style="left:0;right:0;top:806px;gap:24px;font:400 36px Menlo, monospace">
     github.com/Mdavoigneau/Unreeled
     <span style="padding:6px 18px;border:2.5px solid var(--accent);border-radius:999px;color:var(--accent-dark);font:500 26px 'Helvetica Neue', sans-serif">GPL-3.0</span>
   </div>
@@ -357,18 +371,18 @@ body { overflow: hidden; }
 <!-- 13. One caution, and where to read more -->
 <section class="scene" id="caution">
   <h1 class="headline" id="caution-headline">One caution</h1>
-  <div class="a" id="caution-notice" style="left:330px;top:322px;width:1260px;height:470px;border:2px solid var(--hairline);border-radius:16px;background:var(--tray)">
+  <div class="a" id="caution-notice" data-tall="left:60px;top:520px;width:960px;height:600px" style="left:330px;top:322px;width:1260px;height:470px;border:2px solid var(--hairline);border-radius:16px;background:var(--tray)">
     <svg class="ic a" data-i="warning" style="left:64px;top:56px;width:72px;height:72px;color:var(--accent)"></svg>
     <div class="a" style="left:164px;top:60px;font-size:54px;font-weight:500">Unofficial</div>
-    <p class="a" id="caution-1" style="left:64px;top:164px;width:1130px;margin:0;font-size:38px;line-height:1.38">Unreeled isn't made or endorsed by Instagram or Meta.</p>
-    <p class="a" id="caution-2" style="left:64px;top:236px;width:1130px;margin:0;font-size:38px;line-height:1.38">Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it.</p>
-    <p class="a" id="caution-3" style="left:64px;top:372px;width:1130px;margin:0;font-size:38px;line-height:1.38;font-weight:500">Use it at your own risk.</p>
+    <p class="a" id="caution-1" data-tall="width:832px" style="left:64px;top:164px;width:1130px;margin:0;font-size:38px;line-height:1.38">Unreeled isn't made or endorsed by Instagram or Meta.</p>
+    <p class="a" id="caution-2" data-tall="top:290px;width:832px" style="left:64px;top:236px;width:1130px;margin:0;font-size:38px;line-height:1.38">Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it.</p>
+    <p class="a" id="caution-3" data-tall="top:500px;width:832px" style="left:64px;top:372px;width:1130px;margin:0;font-size:38px;line-height:1.38;font-weight:500">Use it at your own risk.</p>
   </div>
   <div class="a" id="caution-end" style="inset:0">
-    <img class="a" id="end-icon" src="../public/images/icon-384.png" alt="" style="left:860px;top:236px;width:200px;height:200px">
-    <img class="a" id="end-wordmark" src="../public/images/wordmark.svg" alt="Unreeled" style="left:715px;top:466px;width:490px;height:100.3px">
-    <div class="a" id="end-site" style="left:0;right:0;top:620px;text-align:center;font-size:72px;font-weight:300;color:var(--accent-dark);letter-spacing:-0.01em">unreeled.app</div>
-    <div class="a" id="end-more" style="left:0;right:0;top:742px;text-align:center;font-size:32px;color:var(--secondary)">The privacy policy, and every line of the code</div>
+    <img class="a" id="end-icon" data-tall="left:440px;top:620px" src="../public/images/icon-384.png" alt="" style="left:860px;top:236px;width:200px;height:200px">
+    <img class="a" id="end-wordmark" data-tall="left:295px;top:860px" src="../public/images/wordmark.svg" alt="Unreeled" style="left:715px;top:466px;width:490px;height:100.3px">
+    <div class="a" id="end-site" data-tall="top:1020px" style="left:0;right:0;top:620px;text-align:center;font-size:72px;font-weight:300;color:var(--accent-dark);letter-spacing:-0.01em">unreeled.app</div>
+    <div class="a" id="end-more" data-tall="top:1150px" style="left:0;right:0;top:742px;text-align:center;font-size:32px;color:var(--secondary)">The privacy policy, and every line of the code</div>
   </div>
 </section>
 
@@ -413,6 +427,30 @@ const ICONS = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+// MARK: Two shapes
+
+/** The tall picture, for a phone held upright, rather than the wide one. */
+const TALL = window.FORMAT === "tall";
+const WIDTH = TALL ? 1080 : 1920;
+const HEIGHT = TALL ? 1800 : 1080;
+/** One of two values: for the wide picture, or for the tall one. */
+const pick = (wide, tall) => (TALL ? tall : wide);
+
+if (TALL) {
+  $("stage").classList.add("tall");
+  for (const node of document.querySelectorAll("[data-tall]")) node.style.cssText += `;${node.dataset.tall}`;
+  for (const path of document.querySelectorAll("[data-tall-d]")) path.setAttribute("d", path.dataset.tallD);
+  for (const wires of document.querySelectorAll("svg.wires")) wires.setAttribute("viewBox", `0 0 ${WIDTH} ${HEIGHT}`);
+} else {
+  // The line breaks that are only for the tall picture go, and the words on either side become one
+  // run of text again: left as two, they'd be drawn a hair differently.
+  for (const line of document.querySelectorAll("br.t")) {
+    const parent = line.parentNode;
+    line.remove();
+    parent.normalize();
+  }
+}
 
 /** Lists marked with data-icon get that icon before each row. */
 function fillRows() {
@@ -576,7 +614,7 @@ scene("direct", first("direct"), last("direct"), {
     s.tokens = kinds.map((kind) => {
       $("direct-tokens").insertAdjacentHTML(
         "beforeend",
-        `<div class="badge" style="left:-32px;top:${kind.out ? 576 : 630}px;width:64px;height:64px;border:3px solid var(--accent);color:var(--accent)"><svg class="ic" data-i="${kind.icon}" style="width:34px;height:34px;stroke-width:1.8"></svg></div>`,
+        `<div class="badge" style="${pick(`left:-32px;top:${kind.out ? 576 : 630}px`, `left:${kind.out ? 468 : 548}px;top:-32px`)};width:64px;height:64px;border:3px solid var(--accent);color:var(--accent)"><svg class="ic" data-i="${kind.icon}" style="width:34px;height:34px;stroke-width:1.8"></svg></div>`,
       );
       return { ...kind, node: $("direct-tokens").lastElementChild };
     });
@@ -600,8 +638,10 @@ scene("direct", first("direct"), last("direct"), {
     $("direct-out-head").style.opacity = $("direct-back-head").style.opacity = ramp(t, s.talks + 0.5, 0.2);
     for (const token of s.tokens) {
       const along = (((t - s.talks - 0.5) / 2.6 + token.phase) % 1 + 1) % 1;
-      const x = token.out ? mix(600, 1290, along) : mix(1290, 600, along);
-      place(token.node, { o: ramp(t, s.talks + 0.55, 0.3) * clamp(Math.min(along, 1 - along) * 9), x });
+      // Across in the wide picture, down and up in the tall one.
+      const [from, to] = pick([600, 1290], [1065, 1375]);
+      const far = token.out ? mix(from, to, along) : mix(to, from, along);
+      place(token.node, { o: ramp(t, s.talks + 0.55, 0.3) * clamp(Math.min(along, 1 - along) * 9), ...pick({ x: far }, { y: far }) });
     }
     const hypothetical = ramp(t, s.nothing, 0.45);
     const struck = ramp(t, s.server + 0.1, 0.3);
@@ -624,7 +664,7 @@ scene("nothing", first("nothing"), last("nothing"), {
     s.cards = cards.map((card, index) => {
       $("nothing-cards").insertAdjacentHTML(
         "beforeend",
-        `<div class="card" style="left:${270 + index * 480}px;top:390px;width:420px;height:340px">
+        `<div class="card" style="left:${pick(270 + index * 480, 330)}px;top:${pick(390, 480 + index * 380)}px;width:420px;height:340px">
           <div class="struck a" style="left:140px;top:52px;width:140px;height:140px">
             <svg class="ic" data-i="${card.icon}" style="width:140px;height:140px;stroke-width:1.15"></svg>
             <svg class="slash" viewBox="0 0 24 24" style="stroke-width:1.5"><path class="draw" pathLength="1" d="M2.5 2.5l19 19"/></svg>
@@ -676,9 +716,10 @@ scene("list", first("list"), last("list"), {
     // The list comes out of the site, waits in the middle to be signed, then goes into the phone.
     const out = ramp(t, s.downloads, 0.8, ease.inOut);
     const home = ramp(t, s.project, 0.7, ease.inOut);
-    const x = mix(mix(1500, 960, out), 420, home) - 75;
+    const way = (from, middle, to) => mix(mix(from, middle, out), to, home);
+    const [x, y] = pick([way(1500, 960, 420), 635], [540, way(445, 765, 1250)]);
     const arrived = ramp(t, s.project + 0.45, 0.3);
-    place($("list-doc"), { o: clamp(out * 5) * (1 - arrived), x, y: 540, s: mix(mix(0.5, 1, out), 0.55, home) });
+    place($("list-doc"), { o: clamp(out * 5) * (1 - arrived), x: x - 75, y: y - 95, s: mix(mix(0.5, 1, out), 0.55, home) });
     const stamped = clamp((t - s.signed) / 0.3);
     place($("list-seal"), { o: clamp(stamped * 4), s: mix(2.1, 1, ease.out(stamped)), r: -12 });
     rise($("list-what"), ramp(t, s.short, 0.45) * (1 - ramp(t, s.project, 0.3)), 14);
@@ -688,7 +729,8 @@ scene("list", first("list"), last("list"), {
     // A list nobody signed gets no further than the phone's edge.
     const comes = ramp(t, s.nobody, 0.7, ease.out);
     const bounce = beat(t, s.change, 0.5);
-    place($("list-fake"), { o: clamp(comes * 4) * (1 - ramp(t, s.change + 0.9, 0.4)), x: mix(1250, 690, comes) + bounce * 40 - 75, y: 755, s: 0.62, r: bounce * 6 });
+    const [from, to, top] = pick([1250, 690, 755], [1010, 800, 1325]);
+    place($("list-fake"), { o: clamp(comes * 4) * (1 - ramp(t, s.change + 0.9, 0.4)), x: mix(from, to, comes) + bounce * 40 - 75, y: top, s: 0.62, r: bounce * 6 });
     pop($("list-no"), t, s.change + 0.05);
   },
 });
@@ -709,7 +751,7 @@ scene("logout", first("logout"), last("logout"), {
     s.rows = rows.map((text, index) => {
       $("logout-rows").insertAdjacentHTML(
         "beforeend",
-        `<div class="a" style="left:880px;top:${420 + index * 104}px;font-size:42px;font-weight:500;white-space:nowrap">${text}<svg class="a" viewBox="0 0 100 10" preserveAspectRatio="none" style="left:-10px;top:50%;width:calc(100% + 20px);height:10px;fill:none;stroke:var(--ink);overflow:visible"><path d="M0 5H100" vector-effect="non-scaling-stroke" stroke-width="4" stroke-linecap="round"/></svg></div>`,
+        `<div class="a" style="left:${pick(880, 150)}px;top:${pick(420, 1190) + index * 104}px;font-size:42px;font-weight:500;white-space:nowrap">${text}<svg class="a" viewBox="0 0 100 10" preserveAspectRatio="none" style="left:-10px;top:50%;width:calc(100% + 20px);height:10px;fill:none;stroke:var(--ink);overflow:visible"><path d="M0 5H100" vector-effect="non-scaling-stroke" stroke-width="4" stroke-linecap="round"/></svg></div>`,
       );
       const node = $("logout-rows").lastElementChild;
       return { node, strike: node.querySelector("svg") };
@@ -779,21 +821,30 @@ scene("notifications", first("notifications"), last("notifications"), {
 
 scene("chain", first("keys"), last("path"), {
   setup(s) {
-    const stops = { instagram: 250, mozilla: 595, relay: 925, apple: 1255, phone: 1660 };
+    // Where each stop is along the way: across in the wide picture, down in the tall one.
+    const stops = pick(
+      { instagram: 250, mozilla: 595, relay: 925, apple: 1255, phone: 1660 },
+      { instagram: 390, mozilla: 570, relay: 750, apple: 930, phone: 1301 },
+    );
     s.stops = stops;
     // The arrows between the stops, drawn when the stops come in.
-    const gaps = [[392, 468], [722, 798], [1052, 1128], [1382, 1506]];
+    const gaps = pick([[392, 468], [722, 798], [1052, 1128], [1382, 1506]], [[450, 510], [630, 690], [810, 870], [990, 1060]]);
     $("chain-wires").innerHTML = gaps
-      .map(([from, to]) => `<path class="draw" pathLength="1" d="M${from + 8} 640H${to - 8}" stroke="var(--ink)" stroke-width="4"/><path d="M${to - 22} 626l14 14-14 14" stroke="var(--ink)" stroke-width="4"/>`)
+      .map(([from, to]) =>
+        pick(
+          `<path class="draw" pathLength="1" d="M${from + 8} 640H${to - 8}" stroke="var(--ink)" stroke-width="4"/><path d="M${to - 22} 626l14 14-14 14" stroke="var(--ink)" stroke-width="4"/>`,
+          `<path class="draw" pathLength="1" d="M540 ${from + 8}V${to - 8}" stroke="var(--ink)" stroke-width="4"/><path d="M526 ${to - 22}l14 14 14-14" stroke="var(--ink)" stroke-width="4"/>`,
+        ),
+      )
       .join("");
     s.wires = [...$("chain-wires").children];
     // Under each stop on the way: it has no key.
     s.nokeys = ["mozilla", "relay", "apple"].map((stop) => {
       $("chain-nokeys").insertAdjacentHTML(
         "beforeend",
-        `<div class="a" style="left:${stops[stop] - 90}px;top:752px;width:180px">
-          <div class="struck" style="width:70px;height:70px;margin:0 auto"><svg class="ic" data-i="key" style="width:70px;height:70px;color:var(--secondary)"></svg><svg class="slash" viewBox="0 0 24 24"><path class="draw" pathLength="1" d="M3 3l18 18"/></svg></div>
-          <div style="margin-top:8px;text-align:center;font-size:27px;font-weight:500;color:var(--secondary)">no key</div>
+        `<div class="a" style="${pick(`left:${stops[stop] - 90}px;top:752px;width:180px`, `left:730px;top:${stops[stop] - 35}px;display:flex;align-items:center;gap:16px`)}">
+          <div class="struck" style="width:70px;height:70px;${pick("margin:0 auto", "")}"><svg class="ic" data-i="key" style="width:70px;height:70px;color:var(--secondary)"></svg><svg class="slash" viewBox="0 0 24 24"><path class="draw" pathLength="1" d="M3 3l18 18"/></svg></div>
+          <div style="${pick("margin-top:8px;text-align:center;", "")}font-size:27px;font-weight:500;color:var(--secondary)">no key</div>
         </div>`,
       );
       const node = $("chain-nokeys").lastElementChild;
@@ -835,11 +886,12 @@ scene("chain", first("keys"), last("path"), {
   },
   draw(t, s) {
     const path = ramp(t, s.path - 0.2, 0.6, ease.inOut);
-    const apart = (1 - path) * 300;
+    // Until the stops come between them, Instagram and the phone are this much closer together.
+    const [ix, iy, px, py] = pick([300, 0, -300, 0], [0, 170, 0, -200]).map((far) => far * (1 - path));
     rise($("chain-headline-keys"), ramp(t, s.from + 0.05) * (1 - ramp(t, s.path - 0.25, 0.25)));
     rise($("chain-headline-path"), ramp(t, s.path + 0.05));
-    place($("chain-instagram"), { o: ramp(t, s.from + 0.1, 0.6), x: apart, y: (1 - ramp(t, s.from + 0.1, 0.6)) * 40 });
-    place($("chain-phone"), { o: ramp(t, s.from + 0.2, 0.6), x: -apart, y: (1 - ramp(t, s.from + 0.2, 0.6)) * 40 });
+    place($("chain-instagram"), { o: ramp(t, s.from + 0.1, 0.6), x: ix, y: iy + (1 - ramp(t, s.from + 0.1, 0.6)) * 40 });
+    place($("chain-phone"), { o: ramp(t, s.from + 0.2, 0.6), x: px, y: py + (1 - ramp(t, s.from + 0.2, 0.6)) * 40 });
 
     // Two keys are made in the phone. The private one goes into its Keychain and stays.
     pop($("chain-private"), t, s.makes);
@@ -851,17 +903,23 @@ scene("chain", first("keys"), last("path"), {
     const locked = ramp(t, s.private + 0.55, 0.25);
     $("chain-keychain").style.borderColor = locked > 0 ? "var(--ink)" : "var(--hairline)";
     $("chain-keylock").style.opacity = locked;
-    place($("chain-callout"), { o: ramp(t, s.private + 0.2, 0.45) * (1 - ramp(t, s.path - 0.3, 0.3)), x: -apart, y: (1 - ramp(t, s.private + 0.2, 0.45)) * 16 });
+    place($("chain-callout"), { o: ramp(t, s.private + 0.2, 0.45) * (1 - ramp(t, s.path - 0.3, 0.3)), x: px, y: py + (1 - ramp(t, s.private + 0.2, 0.45)) * 16 });
     // Once it has given its copy away, the public key steps back, and the lock screen shows.
     place($("chain-public"), { o: clamp((t - s.makes - 0.16) * 8) * (1 - path), s: 0.72 + 0.28 * ease.back(clamp((t - s.makes - 0.16) / 0.42)) });
     $("chain-clock").style.opacity = path;
 
     // Instagram gets the public key and the push address: copies that fly over from the phone.
-    for (const [node, start, top] of [[$("chain-pill-key"), s.public, 752], [$("chain-pill-address"), s.address, 818]]) {
+    for (const [index, [node, start]] of [[$("chain-pill-key"), s.public], [$("chain-pill-address"), s.address]].entries()) {
       const k = ramp(t, start, 0.9, ease.inOut);
-      place(node, { o: clamp((t - start) * 6), x: mix(1520 - apart, 110 + apart, k), y: mix(560, top, k) - Math.sin(Math.PI * k) * 210, s: mix(0.7, 1, k) });
+      const arc = Math.sin(Math.PI * k);
+      // To under Instagram in the wide picture, to beside it in the tall one.
+      const [x, y] = pick(
+        [mix(1520 + px, 110 + ix, k), mix(560, 752 + index * 66, k) - arc * 210],
+        [mix(400, 730, k) + arc * 150, mix(1310 + py, 345 + index * 66 + iy, k)],
+      );
+      place(node, { o: clamp((t - start) * 6), x, y, s: mix(0.7, 1, k) });
     }
-    place($("chain-browser"), { o: ramp(t, s.browser, 0.45) * mix(1, 0, path), x: apart, y: (1 - ramp(t, s.browser, 0.45)) * 14 });
+    place($("chain-browser"), { o: ramp(t, s.browser, 0.45) * mix(1, 0, path), x: ix, y: iy + (1 - ramp(t, s.browser, 0.45)) * 14 });
 
     // The stops in between come in, one after another.
     for (const [index, id] of ["chain-mozilla", "chain-relay", "chain-apple"].entries()) {
@@ -874,16 +932,17 @@ scene("chain", first("keys"), last("path"), {
     });
 
     // A message, encrypted at Instagram, hops from stop to stop above them.
-    let x = s.stops.instagram;
-    let y = 470;
-    let from = "instagram";
+    // Along the way from stop to stop, and beside it (above the row, or left of the column) until
+    // the phone, where it goes in.
+    let along = s.stops.instagram;
+    let beside = pick(470, 210);
     for (const hop of s.hops) {
       const k = ramp(t, hop.start, 0.65, ease.inOut);
       const toPhone = hop.to === "phone";
-      x = mix(x, s.stops[hop.to], k);
-      y = mix(y, toPhone ? 577 : 470, k) - Math.sin(Math.PI * k) * (toPhone ? 30 : 54);
-      from = hop.to;
+      along = mix(along, s.stops[hop.to], k);
+      beside = mix(beside, toPhone ? pick(577, 540) : pick(470, 210), k) - Math.sin(Math.PI * k) * (toPhone ? 30 : 54);
     }
+    const [x, y] = pick([along, beside], [beside, along]);
     const sealed = ramp(t, s.encrypts, 0.36, ease.inOut);
     const opened = ramp(t, s.read, 0.3);
     place($("chain-parcel"), { o: clamp((t - s.message) * 6) * (1 - opened), x: x - 130, y: y - 40, s: 0.6 + 0.4 * ease.back(clamp((t - s.message) / 0.4)) - 0.08 * opened });
@@ -967,7 +1026,7 @@ scene("off", first("off"), last("off"), {
     $("off-keychain").style.borderStyle = deleted >= 1 ? "dashed" : "solid";
     // The phone tells the relay, which then has nothing left about it.
     const told = ramp(t, s.tell, s.forgets - s.tell + 0.1, ease.inOut);
-    place($("off-forget"), { o: told > 0 && told < 1 ? 1 : 0, x: mix(450, 990, told), y: 582 });
+    place($("off-forget"), { o: told > 0 && told < 1 ? 1 : 0, ...pick({ x: mix(450, 990, told), y: 582 }, { x: 420, y: mix(850, 1100, told) }) });
     s.rows.forEach((row, index) => {
       const gone = ramp(t, s.forgets + index * 0.14, 0.3, ease.in);
       place(row, { o: 1 - gone, x: gone * 30 });
@@ -1027,7 +1086,8 @@ scene("open", first("open"), last("open"), {
     const k = ramp(t, s.check, s.done - s.check, ease.inOut);
     pop($("open-ok-app"), t, s.checked[0]);
     pop($("open-ok-relay"), t, s.checked[1]);
-    place($("open-glass"), { o: clamp(k * 10) * (1 - ramp(t, s.done - 0.15, 0.3)), x: mix(380, 1400, k), y: 480 + Math.sin(k * Math.PI * 2) * 46 });
+    const sway = Math.sin(k * Math.PI * 2);
+    place($("open-glass"), { o: clamp(k * 10) * (1 - ramp(t, s.done - 0.15, 0.3)), ...pick({ x: mix(380, 1400, k), y: 480 + sway * 46 }, { x: 465 + sway * 70, y: mix(570, 1180, k) }) });
   },
 });
 
@@ -1101,7 +1161,7 @@ Promise.all([document.fonts.ready, ...loaded]).then(() => {
 /** In a browser: the stage fitted to the window, a slider, and the sound if it has been made. */
 function preview() {
   const stage = $("stage");
-  const fit = () => (stage.style.transform = `scale(${Math.min(innerWidth / 1920, (innerHeight - 44) / 1080)})`);
+  const fit = () => (stage.style.transform = `scale(${Math.min(innerWidth / WIDTH, (innerHeight - 44) / HEIGHT)})`);
   fit();
   addEventListener("resize", fit);
   document.body.insertAdjacentHTML(

@@ -4,7 +4,8 @@ import SwiftUI
 /// the app keeps itself current with (see QueryUpdates).
 enum Links {
     static let website = URL(string: "https://unreeled.app")!
-    /// How the app keeps an account private, with a short video.
+    /// How the app keeps an account private, in writing: the page of the video the app carries
+    /// (SecurityVideo).
     static let security = URL(string: "https://unreeled.app/security")!
     /// The same page, at how notifications pass through the relay.
     static let notifications = URL(string: "https://unreeled.app/security#notifications")!
@@ -104,6 +105,7 @@ struct WelcomeView: View {
 /// From the top right of Settings: the notice again, the version, and the project's links.
 struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var showsVideo = false
 
     var body: some View {
         ScrollView {
@@ -121,7 +123,11 @@ struct AboutView: View {
                     .padding(.horizontal, 24)
                 VStack(spacing: 0) {
                     row("Website", detail: "unreeled.app", url: Links.website)
-                    row("How It Stays Private", detail: "Video", url: Links.security)
+                    // Plays here, at once; the page it comes from is linked under it.
+                    Button { showsVideo = true } label: {
+                        rowLabel("How It Stays Private", detail: "Video", symbol: "play")
+                    }
+                    .buttonStyle(.plain)
                     row("Privacy Policy", url: Links.privacy)
                     row("Source Code", detail: "GitHub", url: Links.source)
                     row("Report a Problem", url: Links.issues)
@@ -144,23 +150,28 @@ struct AboutView: View {
                 .foregroundStyle(Theme.accent)
                 .padding(.trailing, 8)
         }
+        .fullScreenCover(isPresented: $showsVideo) { SecurityVideo() }
     }
 
+    /// A row that leaves the app for one of the project's pages.
     private func row(_ title: String, detail: String? = nil, url: URL) -> some View {
-        Link(destination: url) {
-            HStack {
-                Text(title).foregroundStyle(Theme.ink)
-                Spacer()
-                if let detail { Text(detail).foregroundStyle(Theme.secondary) }
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 13, weight: .light))
-                    .foregroundStyle(Theme.secondary)
-            }
-            .font(Theme.font(15))
-            .padding(.horizontal, 24)
-            .frame(minHeight: 48)
-            .contentShape(Rectangle())
+        Link(destination: url) { rowLabel(title, detail: detail, symbol: "arrow.up.right") }
+    }
+
+    private func rowLabel(_ title: String, detail: String?, symbol: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(Theme.ink)
+            Spacer()
+            if let detail { Text(detail).foregroundStyle(Theme.secondary) }
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .light))
+                .foregroundStyle(Theme.secondary)
+                .frame(width: 16)
         }
+        .font(Theme.font(15))
+        .padding(.horizontal, 24)
+        .frame(minHeight: 48)
+        .contentShape(Rectangle())
         .overlay(alignment: .bottom) { Theme.hairline.frame(height: 0.5).padding(.leading, 24) }
     }
 

@@ -5,8 +5,9 @@
 //   - /queries.json, the repository's Unreeled/API/Queries.json byte for byte, which installed
 //     apps download to stay current (see Unreeled/API/QueryUpdates.swift), and /queries.json.sig,
 //     its signature, which they check;
-//   - sitemap.xml, and everything in public/ as it is: the images, and the video on /security,
-//     which video/build.py makes (see README.md).
+//   - /video/security.mp4 and its captions, the repository's Unreeled/Video/ byte for byte: the
+//     video the app carries and plays, which video/build.py makes (see README.md);
+//   - sitemap.xml, and everything in public/ as it is.
 //
 //     npm run build
 //
@@ -63,7 +64,7 @@ async function privacy() {
 /** How long an MP4 lasts, in seconds, read from its movie header (the mvhd box). */
 function mp4Seconds(bytes) {
   const header = bytes.indexOf("mvhd", 0, "latin1");
-  if (header < 0) throw new Error("public/video/security.mp4 has no movie header");
+  if (header < 0) throw new Error("Unreeled/Video/security.mp4 has no movie header");
   const [scale, length] =
     bytes[header + 4] === 1
       ? [bytes.readUInt32BE(header + 24), Number(bytes.readBigUInt64BE(header + 28))]
@@ -71,10 +72,14 @@ function mp4Seconds(bytes) {
   return length / scale;
 }
 
-/** The video on /security, which video/build.py makes: how long it is, and what it says, for the
- * page's structured data. */
+/** The video on /security, exactly as it is in the repository, where the app takes its own copy
+ * from (video/build.py makes it), with its captions. Returns how long it is and what it says, for
+ * the page's structured data. */
 async function securityVideo() {
-  const seconds = Math.round(mp4Seconds(await readFile(new URL("public/video/security.mp4", website))));
+  const video = await readFile(new URL("Unreeled/Video/security.mp4", root));
+  await writeFile(new URL("video/security.mp4", dist), video);
+  await writeFile(new URL("video/security.vtt", dist), await readFile(new URL("Unreeled/Video/security.vtt", root)));
+  const seconds = Math.round(mp4Seconds(video));
   const narration = JSON.parse(await readFile(new URL("video/narration.json", website), "utf8"));
   return {
     file: "security",
@@ -384,6 +389,7 @@ const queryList = await queries();
 const policy = await privacy();
 const layout = await readFile(new URL("src/layout.html", website), "utf8");
 const style = await readFile(new URL("src/style.css", website), "utf8");
+const video = await securityVideo();
 const hashes = await fileHashes();
 
 // Articles have a headline (their <h1>), the dates they were first published and last changed,
@@ -440,7 +446,7 @@ const pages = [
       ["Push technology", "https://en.wikipedia.org/wiki/Push_technology"],
       ["Open-source software", "https://en.wikipedia.org/wiki/Open-source_software"],
     ],
-    video: await securityVideo(),
+    video,
   },
   {
     file: "privacy.html",

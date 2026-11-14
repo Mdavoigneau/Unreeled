@@ -10,12 +10,13 @@
 # ///
 """Builds the video on unreeled.app/security: how Unreeled keeps an account private.
 
-    uv run website/video/build.py            everything, into website/public/video/
+    uv run website/video/build.py            everything, into Unreeled/Video/ and website/public/video/
     uv run website/video/build.py voice      only the narration and the timeline
     uv run website/video/build.py frames     only the pictures
     uv run website/video/build.py sound      only the sound
     uv run website/video/build.py encode     only the final files, from the pictures and the sound
-    uv run website/video/build.py still 42.5 one picture, at 42.5 seconds, to look at
+    uv run website/video/build.py still 42.5 one picture, at 42.5 seconds, to look at (--tall for
+                                             the tall shape)
     uv run website/video/build.py levels     how loud each sound effect is beside the voice
 
 Everything is made here, from this folder, with free software:
@@ -23,7 +24,8 @@ Everything is made here, from this folder, with free software:
   - the words are narration.json, spoken by Kokoro (Apache 2.0), an open text-to-speech model.
     Any of its voices can read them: `--voice am_fenrir`, `--voice bm_george`;
   - the pictures are scenes.html, a page that draws the frame for any moment, photographed 30
-    times a second by a headless Chromium (Playwright);
+    times a second by a headless Chromium (Playwright). It draws two shapes: wide, for the website,
+    and tall, for a phone held upright, which the app shows. Both get the same sound;
   - the sound effects are computed below, sample by sample. There are no recordings;
   - ffmpeg puts them together.
 
@@ -36,7 +38,10 @@ It needs uv (https://docs.astral.sh/uv/) and ffmpeg. The first run downloads Kok
 
     uv run --with playwright==1.59.0 playwright install chromium
 
-What it writes is committed, as the site's images are: Cloudflare only copies it.
+What it writes is committed. Both shapes of the video, its captions and where its parts begin go
+to Unreeled/Video/: the app carries them and plays its own copies, and the website's build takes
+the wide one and the captions from there, as it takes the query list. Two pictures from the video, which only the website shows,
+go to website/public/video/.
 """
 
 import argparse
@@ -55,9 +60,12 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 PUBLIC = HERE.parent / "public" / "video"
+APP = HERE.parent.parent / "Unreeled" / "Video"
 NAME = "security"
 FPS = 30
-WIDTH, HEIGHT = 1920, 1080
+# The video's two shapes: wide for the website, and tall for a phone held upright, which the app
+# plays. Each has its pictures' folder and, for the tall one, its own file name.
+SHAPES = {"wide": (1920, 1080, "frames", NAME), "tall": (1080, 1800, "frames-tall", f"{NAME}-tall")}
 RATE = 48000  # of the sound; Kokoro speaks at 24000
 VOICE_RATE = 24000
 
@@ -166,6 +174,7 @@ def voice(arguments, work: Path):
         scenes.append(
             {
                 "id": scene["id"],
+                **({"chapter": scene["chapter"]} if "chapter" in scene else {}),
                 "start": round(start, 3),
                 "end": round(end, 3),
                 "speech": [round(speech, 3), round(speech + length, 3)],
@@ -194,48 +203,52 @@ def timeline_of(work: Path) -> dict:
 # MARK: Pictures
 
 
-def open_page(playwright, timeline: dict):
-    """scenes.html in a headless Chromium, told the timeline, ready to draw any moment."""
+def open_page(playwright, timeline: dict, shape="wide"):
+    """scenes.html in a headless Chromium, told the timeline and which shape to draw, ready to
+    draw any moment."""
     try:
         browser = playwright.chromium.launch()
     except Exception as error:
         if "Executable doesn't exist" in str(error):
             raise SystemExit("Chromium is missing: uv run --with playwright==1.59.0 playwright install chromium")
         raise
-    page = browser.new_page(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=1)
+    width, height, _, _ = SHAPES[shape]
+    page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
     page.on("pageerror", lambda error: print(f"scenes.html: {error}", file=sys.stderr))
-    page.add_init_script(f"window.RENDERING = true; window.TIMELINE = {json.dumps(timeline)};")
+    page.add_init_script(f"window.RENDERING = true; window.FORMAT = {json.dumps(shape)}; window.TIMELINE = {json.dumps(timeline)};")
     page.goto((HERE / "scenes.html").as_uri())
     page.wait_for_function("window.ready === true", timeout=20000)
     return browser, page
 
 
 def render(job):
-    """One worker's share of the frames."""
-    work, numbers = job
+    """One worker's share of the frames, of one shape."""
+    work, numbers, shape = job
     from playwright.sync_api import sync_playwright
 
     timeline = timeline_of(Path(work))
+    folder = SHAPES[shape][2]
     with sync_playwright() as playwright:
-        browser, page = open_page(playwright, timeline)
+        browser, page = open_page(playwright, timeline, shape)
         for number in numbers:
             page.evaluate(f"seek({number / FPS})")
-            page.screenshot(path=f"{work}/frames/{number:05d}.png", type="png")
+            page.screenshot(path=f"{work}/{folder}/{number:05d}.png", type="png")
         browser.close()
     return len(numbers)
 
 
 def frames(arguments, work: Path):
     timeline = timeline_of(work)
-    folder = work / "frames"
-    shutil.rmtree(folder, ignore_errors=True)
-    folder.mkdir(parents=True)
     workers = max(1, min(arguments.workers, os.cpu_count() or 1))
     numbers = list(range(timeline["frames"]))
-    jobs = [(str(work), numbers[worker::workers]) for worker in range(workers)]
-    with ProcessPoolExecutor(workers) as pool:
-        done = sum(pool.map(render, jobs))
-    print(f"Pictures: {done} frames with {workers} browsers.")
+    for shape, (_, _, name, _) in SHAPES.items():
+        folder = work / name
+        shutil.rmtree(folder, ignore_errors=True)
+        folder.mkdir(parents=True)
+        jobs = [(str(work), numbers[worker::workers], shape) for worker in range(workers)]
+        with ProcessPoolExecutor(workers) as pool:
+            done = sum(pool.map(render, jobs))
+        print(f"Pictures, {shape}: {done} frames with {workers} browsers.")
 
 
 def still(arguments, work: Path):
@@ -243,10 +256,11 @@ def still(arguments, work: Path):
     from playwright.sync_api import sync_playwright
 
     timeline = timeline_of(work)
-    folder = work / "stills"
+    shape = "tall" if arguments.tall else "wide"
+    folder = work / ("stills-tall" if arguments.tall else "stills")
     folder.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        browser, page = open_page(playwright, timeline)
+        browser, page = open_page(playwright, timeline, shape)
         for moment in arguments.at:
             page.evaluate(f"seek({moment})")
             path = folder / f"{moment:07.2f}.png"
@@ -494,20 +508,27 @@ def subtitles(timeline: dict) -> str:
 def encode(arguments, work: Path):
     timeline = timeline_of(work)
     PUBLIC.mkdir(parents=True, exist_ok=True)
-    video = PUBLIC / f"{NAME}.mp4"
-    ffmpeg(
-        "-framerate", FPS, "-i", work / "frames" / "%05d.png", "-i", work / "mix.wav",
-        "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
-        "-c:v", "libx264", "-preset", "veryslow", "-crf", arguments.quality, "-tune", "animation",
-        "-profile:v", "high", "-level", "4.1", "-g", FPS * 4,
-        "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
-        "-c:a", "aac", "-b:a", "128k", "-ar", RATE,
-        "-t", timeline["duration"], "-movflags", "+faststart",
-        "-map_metadata", "-1", "-metadata", "title=How Unreeled keeps your account private",
-        "-metadata:s:a:0", "language=eng",
-        video,
-    )  # fmt: skip
-    (PUBLIC / f"{NAME}.vtt").write_text(subtitles(timeline))
+    APP.mkdir(parents=True, exist_ok=True)
+    # The same sound under both shapes, so they can stand in for each other at any moment.
+    for shape, (_, _, pictures, name) in SHAPES.items():
+        video = APP / f"{name}.mp4"
+        ffmpeg(
+            "-framerate", FPS, "-i", work / pictures / "%05d.png", "-i", work / "mix.wav",
+            "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p",
+            "-c:v", "libx264", "-preset", "veryslow", "-crf", arguments.quality, "-tune", "animation",
+            "-profile:v", "high", "-level", "4.1", "-g", FPS * 4,
+            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+            "-c:a", "aac", "-b:a", "128k", "-ar", RATE,
+            "-t", timeline["duration"], "-movflags", "+faststart",
+            "-map_metadata", "-1", "-metadata", "title=How Unreeled keeps your account private",
+            "-metadata:s:a:0", "language=eng",
+            video,
+        )  # fmt: skip
+        print(f"{video.relative_to(HERE.parent.parent)}: {timeline['duration']:.1f} s, {video.stat().st_size / 1e6:.1f} MB.")
+    (APP / f"{NAME}.vtt").write_text(subtitles(timeline))
+    # Where each part begins, for the app to start at one: the scenes narration.json gives a chapter.
+    chapters = [{"title": scene["chapter"], "start": scene["start"]} for scene in timeline["scenes"] if "chapter" in scene]
+    (APP / f"{NAME}-chapters.json").write_text(json.dumps(chapters, indent=2) + "\n")
     # Two pictures from it. What the page shows before the video plays: the title, once it has
     # settled. And for the page's text: the way a notification takes, once it has arrived.
     scenes = {scene["id"]: scene for scene in timeline["scenes"]}
@@ -515,8 +536,8 @@ def encode(arguments, work: Path):
         frame = work / "frames" / f"{round(moment * FPS):05d}.png"
         ffmpeg("-i", frame, "-vf", "scale=1280:-2:flags=lanczos", "-frames:v", 1, "-update", 1, PUBLIC / f"{name}.png")
     if not arguments.keep_frames:
-        shutil.rmtree(work / "frames", ignore_errors=True)
-    print(f"{video.relative_to(HERE.parent.parent)}: {timeline['duration']:.1f} s, {video.stat().st_size / 1e6:.1f} MB.")
+        for _, _, pictures, _ in SHAPES.values():
+            shutil.rmtree(work / pictures, ignore_errors=True)
 
 
 # MARK: Run
@@ -533,6 +554,7 @@ def main():
     parser.add_argument("--workers", type=int, default=6, help="how many browsers take the pictures")
     parser.add_argument("--work", type=Path, default=HERE / ".build", help="where the pieces are kept")
     parser.add_argument("--keep-frames", action="store_true", help="keep the pictures after encoding")
+    parser.add_argument("--tall", action="store_true", help="for still: the tall shape, not the wide one")
     arguments = parser.parse_args()
     arguments.work.mkdir(parents=True, exist_ok=True)
     steps = ["voice", "frames", "sound", "encode"] if arguments.step == "all" else [arguments.step]

@@ -7,6 +7,7 @@ struct NotificationsOffer: View {
     let done: () -> Void
     @Environment(Session.self) private var session
     @Environment(PushNotifications.self) private var notifications
+    @State private var showsVideo = false
 
     var body: some View {
         AnswerPage {
@@ -39,11 +40,20 @@ struct NotificationsOffer: View {
                     )
                 }
                 .padding(.top, 36)
-                Link("How this works, in a short video", destination: Links.notifications)
+                // The app's own copy of the video, from where it comes to notifications.
+                Button { showsVideo = true } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.circle")
+                            .font(.system(size: 17, weight: .light))
+                        Text("How this works, in a short video")
+                    }
                     .font(Theme.font(14))
                     .foregroundStyle(Theme.accent)
                     .frame(minHeight: 44)
-                    .padding(.top, 14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 14)
                 if let failure = notifications.failure {
                     Text(failure)
                         .font(Theme.font(14))
@@ -67,6 +77,7 @@ struct NotificationsOffer: View {
                 .disabled(notifications.isWorking)
         }
         .onAppear { notifications.forgetFailure() }
+        .fullScreenCover(isPresented: $showsVideo) { SecurityVideo(chapter: "Notifications") }
     }
 
     private func turnOn() {

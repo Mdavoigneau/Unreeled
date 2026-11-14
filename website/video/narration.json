@@ -13,6 +13,7 @@
     },
     {
       "id": "login",
+      "chapter": "The app",
       "text": "You log in on Instagram's own page. Unreeled never reads or stores your password."
     },
     {
@@ -34,6 +35,7 @@
     },
     {
       "id": "notifications",
+      "chapter": "Notifications",
       "lead": 0.7,
       "text": "Notifications are optional. They do pass through a server, Unreeled's relay, but it can't read them. Here's why."
     },
@@ -56,6 +58,7 @@
     },
     {
       "id": "open",
+      "chapter": "In the open",
       "text": "The app and the relay are open source, so anyone can check all of this."
     },
     {
