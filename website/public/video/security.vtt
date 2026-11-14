@@ -1,0 +1,110 @@
+WEBVTT
+
+00:00:01.115 --> 00:00:04.312
+Unreeled is an open-source
+app for Instagram.
+
+00:00:04.352 --> 00:00:06.570
+Here's how it keeps your account private.
+
+00:00:07.225 --> 00:00:09.848
+You log in on Instagram's own page.
+
+00:00:09.888 --> 00:00:13.100
+Unreeled never reads or
+stores your password.
+
+00:00:13.715 --> 00:00:16.650
+After that, your phone talks
+straight to Instagram.
+
+00:00:16.690 --> 00:00:20.980
+Nothing you see or send passes
+through a server of ours.
+
+00:00:21.610 --> 00:00:24.182
+No analytics, no tracking, no ads.
+
+00:00:24.222 --> 00:00:26.670
+Unreeled collects nothing about you.
+
+00:00:27.270 --> 00:00:31.420
+It downloads one thing: a short
+list that keeps it working,
+
+00:00:31.460 --> 00:00:34.730
+signed by the project so
+nobody else can change it.
+
+00:00:35.375 --> 00:00:39.050
+Log out, and everything it
+saved on your phone is deleted.
+
+00:00:40.140 --> 00:00:42.125
+Notifications are optional.
+
+00:00:42.165 --> 00:00:46.363
+They do pass through a server, Unreeled's
+relay, but it can't read them.
+
+00:00:46.403 --> 00:00:47.550
+Here's why.
+
+00:00:48.165 --> 00:00:52.413
+Your phone makes a pair of keys, and
+the private key never leaves it.
+
+00:00:52.453 --> 00:00:57.590
+Instagram gets the public key and a
+push address, just as a browser would.
+
+00:00:58.205 --> 00:01:01.690
+Instagram encrypts each
+notification for your phone.
+
+00:01:01.730 --> 00:01:06.640
+It travels through Mozilla's push
+service, Unreeled's relay, and Apple's.
+
+00:01:06.680 --> 00:01:08.303
+None of them has the key.
+
+00:01:08.343 --> 00:01:10.280
+Only your phone can read it.
+
+00:01:11.285 --> 00:01:15.470
+The relay keeps a random ID,
+your phone's address at Apple,
+
+00:01:15.510 --> 00:01:18.820
+the push address, and when
+your phone was last seen.
+
+00:01:18.860 --> 00:01:22.495
+It sees when a notification
+passes, and its size.
+
+00:01:22.535 --> 00:01:25.360
+Never what it says, or
+whose account it is.
+
+00:01:25.980 --> 00:01:28.790
+Turn notifications off, or log out,
+
+00:01:28.830 --> 00:01:32.340
+and the keys are deleted and
+the relay forgets your phone.
+
+00:01:32.940 --> 00:01:37.740
+The app and the relay are open source,
+so anyone can check all of this.
+
+00:01:38.380 --> 00:01:41.415
+One caution: Unreeled is unofficial,
+
+00:01:41.455 --> 00:01:44.803
+and Instagram could restrict
+an account that uses it.
+
+00:01:44.843 --> 00:01:48.040
+The details are at unreeled.app.

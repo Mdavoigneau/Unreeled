@@ -5,7 +5,8 @@
 //   - /queries.json, the repository's Unreeled/API/Queries.json byte for byte, which installed
 //     apps download to stay current (see Unreeled/API/QueryUpdates.swift), and /queries.json.sig,
 //     its signature, which they check;
-//   - sitemap.xml, and everything in public/ as it is.
+//   - sitemap.xml, and everything in public/ as it is: the images, and the video on /security,
+//     which video/build.py makes (see README.md).
 //
 //     npm run build
 //
@@ -58,6 +59,37 @@ async function privacy() {
     lastModified: date && !isNaN(date) ? date.toISOString().slice(0, 10) : null,
   };
 }
+
+/** How long an MP4 lasts, in seconds, read from its movie header (the mvhd box). */
+function mp4Seconds(bytes) {
+  const header = bytes.indexOf("mvhd", 0, "latin1");
+  if (header < 0) throw new Error("public/video/security.mp4 has no movie header");
+  const [scale, length] =
+    bytes[header + 4] === 1
+      ? [bytes.readUInt32BE(header + 24), Number(bytes.readBigUInt64BE(header + 28))]
+      : [bytes.readUInt32BE(header + 16), bytes.readUInt32BE(header + 20)];
+  return length / scale;
+}
+
+/** The video on /security, which video/build.py makes: how long it is, and what it says, for the
+ * page's structured data. */
+async function securityVideo() {
+  const seconds = Math.round(mp4Seconds(await readFile(new URL("public/video/security.mp4", website))));
+  const narration = JSON.parse(await readFile(new URL("video/narration.json", website), "utf8"));
+  return {
+    file: "security",
+    duration: `PT${Math.floor(seconds / 60)}M${seconds % 60}S`,
+    transcript: narration.scenes.map((scene) => scene.text).join(" "),
+  };
+}
+
+/** The video's player, wherever a page says {{security-video}}: the browser's own controls, no
+ * JavaScript. Until someone presses play it loads only its first picture. */
+const securityPlayer = `<video controls playsinline preload="none" poster="/video/security.png" width="1920" height="1080" aria-label="How Unreeled keeps your account private">
+    <source src="/video/security.mp4" type="video/mp4">
+    <track kind="captions" srclang="en" label="English" src="/video/security.vtt">
+    <a href="/video/security.mp4">Watch the video</a>
+  </video>`;
 
 // MARK: Pages
 
@@ -152,6 +184,25 @@ function articleData(page) {
     publisher: { "@id": ids.organization },
     isPartOf: { "@id": ids.website },
     about: page.about.map(([name, sameAs]) => ({ "@type": "Thing", name, sameAs })),
+    ...(page.video && { video: { "@id": `${url}#video` } }),
+  };
+}
+
+/** An article's video: what search engines need to show it, and what it says. */
+function videoData(page) {
+  const url = `${site}${page.path}`;
+  return {
+    "@type": "VideoObject",
+    "@id": `${url}#video`,
+    name: page.headline,
+    description: page.description,
+    thumbnailUrl: `${site}/video/${page.video.file}.png`,
+    contentUrl: `${site}/video/${page.video.file}.mp4`,
+    uploadDate: page.published,
+    duration: page.video.duration,
+    transcript: page.video.transcript,
+    inLanguage: "en",
+    publisher: { "@id": ids.organization },
   };
 }
 
@@ -199,7 +250,10 @@ const appData = [
 function structuredData(page, main) {
   let graph;
   if (page.path === "/") graph = [websiteData, organizationData, ...appData, ...questionsData(main)];
-  else if (page.published) graph = [websiteData, organizationData, articleData(page), ...questionsData(main)];
+  else if (page.published) {
+    const video = page.video ? [videoData(page)] : [];
+    graph = [websiteData, organizationData, articleData(page), ...video, ...questionsData(main)];
+  }
   else return null;
   return { "@context": "https://schema.org", "@graph": graph };
 }
@@ -266,22 +320,30 @@ const labelTableCells = (html) =>
     return `<table>${rows}</table>`;
   });
 
-/** Adds a short hash of each image to its address, so browsers can keep images for a year (see
- * public/_headers) and still get a new one the moment it changes. */
-async function versionImages(html) {
+/** A short hash of each image and of the video's files, by address. */
+async function fileHashes() {
   const hashes = new Map();
-  for (const name of await readdir(new URL("images/", dist))) {
-    const bytes = await readFile(new URL(`images/${name}`, dist));
-    hashes.set(name, createHash("sha256").update(bytes).digest("hex").slice(0, 10));
+  for (const folder of ["images", "video"]) {
+    for (const name of await readdir(new URL(`${folder}/`, dist))) {
+      const bytes = await readFile(new URL(`${folder}/${name}`, dist));
+      hashes.set(`${folder}/${name}`, createHash("sha256").update(bytes).digest("hex").slice(0, 10));
+    }
   }
-  return html.replace(/(["'])((?:https:\/\/unreeled\.app)?\/images\/([\w.-]+))\1/g, (match, quote, url, name) => {
-    if (!hashes.has(name)) throw new Error(`Missing image: ${url}`);
-    return `${quote}${url}?v=${hashes.get(name)}${quote}`;
+  return hashes;
+}
+
+/** Adds each file's hash to its address, so browsers can keep images and the video for a year
+ * (see public/_headers) and still get a new one the moment it changes. */
+function versionFiles(html, hashes) {
+  return html.replace(/(["'])((?:https:\/\/unreeled\.app)?\/((?:images|video)\/[\w.-]+))\1/g, (match, quote, url, file) => {
+    if (!hashes.has(file)) throw new Error(`Missing file: ${url}`);
+    return `${quote}${url}?v=${hashes.get(file)}${quote}`;
   });
 }
 
-async function render(page, layout, style) {
+async function render(page, layout, style, hashes) {
   let main = page.main ?? (await readFile(new URL(`src/${page.file}`, website), "utf8"));
+  main = main.replaceAll("{{security-video}}", securityPlayer);
   // Articles show their dates from the page list below, so the page and its metadata agree.
   if (page.published) {
     const time = (date) => `<time datetime="${date}">${longDate(date)}</time>`;
@@ -295,7 +357,7 @@ async function render(page, layout, style) {
   if (page.path) {
     html = html.replace(`<a href="${page.path}">`, `<a href="${page.path}" aria-current="page">`);
   }
-  await writeFile(new URL(page.file, dist), await versionImages(keepEmailAddresses(labelTableCells(html))));
+  await writeFile(new URL(page.file, dist), versionFiles(keepEmailAddresses(labelTableCells(html)), hashes));
 }
 
 function sitemap(pages) {
@@ -322,9 +384,10 @@ const queryList = await queries();
 const policy = await privacy();
 const layout = await readFile(new URL("src/layout.html", website), "utf8");
 const style = await readFile(new URL("src/style.css", website), "utf8");
+const hashes = await fileHashes();
 
 // Articles have a headline (their <h1>), the dates they were first published and last changed,
-// and what they're about, as Wikipedia articles, for search engines and assistants.
+// and what they're about, as Wikipedia articles, for search engines and assistants. One has a video.
 const pages = [
   {
     file: "index.html",
@@ -364,6 +427,22 @@ const pages = [
     ],
   },
   {
+    file: "security.html",
+    path: "/security",
+    title: "Is Unreeled safe? How it keeps your Instagram account private",
+    headline: "How Unreeled keeps your account private",
+    description:
+      "What happens to your Instagram login in Unreeled, the one thing the app downloads, and how notifications pass through a relay that can't read them. With a two-minute video.",
+    published: "2026-11-14",
+    modified: "2026-11-14",
+    about: [
+      ["End-to-end encryption", "https://en.wikipedia.org/wiki/End-to-end_encryption"],
+      ["Push technology", "https://en.wikipedia.org/wiki/Push_technology"],
+      ["Open-source software", "https://en.wikipedia.org/wiki/Open-source_software"],
+    ],
+    video: await securityVideo(),
+  },
+  {
     file: "privacy.html",
     path: "/privacy",
     title: "Privacy Policy · Unreeled",
@@ -380,7 +459,7 @@ const pages = [
   },
 ];
 
-for (const page of pages) await render(page, layout, style);
+for (const page of pages) await render(page, layout, style, hashes);
 await writeFile(new URL("sitemap.xml", dist), sitemap(pages));
 
 console.log(

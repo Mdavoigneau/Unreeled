@@ -5,3 +5,5 @@ dist/
 .wrangler/
 .dev.vars*
 .env*
+# The video's pieces on the way to public/video/ (video/build.py).
+video/.build/

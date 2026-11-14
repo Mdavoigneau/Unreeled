@@ -4,6 +4,10 @@ import SwiftUI
 /// the app keeps itself current with (see QueryUpdates).
 enum Links {
     static let website = URL(string: "https://unreeled.app")!
+    /// How the app keeps an account private, with a short video.
+    static let security = URL(string: "https://unreeled.app/security")!
+    /// The same page, at how notifications pass through the relay.
+    static let notifications = URL(string: "https://unreeled.app/security#notifications")!
     static let privacy = URL(string: "https://unreeled.app/privacy")!
     static let source = URL(string: "https://github.com/Mdavoigneau/Unreeled")!
     static let issues = URL(string: "https://github.com/Mdavoigneau/Unreeled/issues")!
@@ -117,6 +121,7 @@ struct AboutView: View {
                     .padding(.horizontal, 24)
                 VStack(spacing: 0) {
                     row("Website", detail: "unreeled.app", url: Links.website)
+                    row("How It Stays Private", detail: "Video", url: Links.security)
                     row("Privacy Policy", url: Links.privacy)
                     row("Source Code", detail: "GitHub", url: Links.source)
                     row("Report a Problem", url: Links.issues)

@@ -26,7 +26,7 @@ Colours and fonts live in [Theme.swift](../Unreeled/App/Theme.swift), the bars i
 
 ## First launch
 
-Before anything else, a short notice says what Unreeled is and what using it means for your account. "I Understand" leads to Instagram's own login page. The notice is also in Settings, under About at the top right, with the version and the project's links.
+Before anything else, a short notice says what Unreeled is and what using it means for your account. "I Understand" leads to Instagram's own login page. The notice is also in Settings, under About at the top right, with the version and the project's links, among them "How It Stays Private": the website's page and short video about what happens to your login.
 
 ## Speed
 
@@ -137,7 +137,7 @@ Opening Activity marks nothing as seen, as on the website. It reloads when you s
 
 Only in a build made with a relay, and off until you turn them on: [NOTIFICATIONS.md](NOTIFICATIONS.md) has the whole design. They have worked on an iPhone since 13 November 2026; how they hold over weeks isn't known yet.
 
-- **Asking.** Once, after logging in, a page says what notifications are and what turning them on means, with "Turn On" and "Not Now". "Turn On" brings up iOS's own question. The same page comes up when you switch them on in Settings.
+- **Asking.** Once, after logging in, a page says what notifications are and what turning them on means, with "Turn On" and "Not Now", and a link to the website's short video of how they reach the phone. "Turn On" brings up iOS's own question. The same page comes up when you switch them on in Settings.
 - **In Settings:** a switch, since when they've been on, a way into iOS Settings when notifications are off for Unreeled there, and "Choose What Instagram Sends", which opens Instagram's own page for the kinds of notification, with its "Messages only".
 - **What shows:** the conversation's name and the message for a message, with the sender's picture; the notification's text for likes, follows and the rest. Messages stack by conversation. No badge on the app's icon.
 - **A tap** opens the conversation, or Activity.

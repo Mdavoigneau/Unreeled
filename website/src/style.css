@@ -225,6 +225,35 @@ th, td { padding: 10px 16px 10px 0; border-top: 1px solid var(--hairline); text-
 th { color: var(--secondary); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
 td:first-child { min-width: 9em; }
 
+/* The video, in a hairline frame. Its controls are the browser's own. */
+.video { max-width: 40em; margin: 20px 0; }
+.video video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: #FFFFFF;
+}
+.video figcaption { margin-top: 10px; color: var(--secondary); font-size: 13px; }
+.article .video { max-width: none; margin: 28px 0 32px; }
+
+/* A picture from the video. */
+.still { margin: 20px 0; }
+.still img { display: block; border: 1px solid var(--hairline); border-radius: 4px; }
+
+/* Three short lists side by side. */
+.thirds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 28px; margin: 16px 0 4px; }
+.thirds h4 {
+  margin: 0 0 8px;
+  color: var(--secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 /* Inline references, such as (Hunt et al., 2018), go to the list of sources at the end. */
 .cite { white-space: nowrap; }
 .sources { padding-left: 0; list-style: none; font-size: 14px; }
@@ -271,6 +300,12 @@ td:first-child { min-width: 9em; }
   .article { padding-top: 36px; }
   .article h2 { margin-top: 40px; }
   blockquote { font-size: 17px; }
+  .thirds { grid-template-columns: 1fr; }
+}
+
+/* On a wide screen an article's video is as wide as the site, wider than its text. */
+@media (min-width: 1000px) {
+  .article .video { margin-left: -107px; margin-right: -107px; }
 }
 
 /* On phones, each table row becomes a short list: the first cell in bold, then the others, each

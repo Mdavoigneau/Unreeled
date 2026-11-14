@@ -1,0 +1,139 @@
+<main id="main" class="article">
+<article>
+
+<header>
+  <p class="kicker">Security</p>
+  <h1>How Unreeled keeps your account private</h1>
+  <p class="lede">Unreeled is open source, so nobody has to take its privacy on trust. This page says what happens to your Instagram login, what the app downloads, and how notifications pass through a relay that can't read them. The video says the same in under two minutes.</p>
+  <p class="byline">By Unreeled · Updated {{modified}}</p>
+</header>
+
+<figure class="video">
+  {{security-video}}
+  <figcaption>Just under two minutes, with captions. Everything it says is written out below, with more detail.</figcaption>
+</figure>
+
+<section class="summary" aria-labelledby="short">
+  <h2 id="short">The short version</h2>
+  <ul>
+    <li><strong>Your login stays on your phone.</strong> You log in on Instagram's own page, and Unreeled never reads or stores your password.</li>
+    <li><strong>No server of ours is in between.</strong> What you see and send goes straight between your phone and Instagram.</li>
+    <li><strong>Nothing is collected.</strong> No analytics, no tracking, no ads, no third-party code.</li>
+    <li><strong>The one download is signed.</strong> The app uses a list of Instagram's request IDs only if the project signed it.</li>
+    <li><strong>Notifications are optional, and only your phone can read them.</strong> They pass through a relay that never has the key.</li>
+    <li><strong>It's all in the open.</strong> The app and the relay are on GitHub for anyone to check.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="app">
+  <h2 id="app">The app</h2>
+
+  <h3>You log in on Instagram's own page</h3>
+  <p>Logging in happens on Instagram's own login page, shown inside the app. Unreeled never reads or stores your password.</p>
+
+  <h3>Your login stays on your phone</h3>
+  <p>Instagram's cookies stay on your phone, in the app's own web data store, which is left out of the phone's backups. The session values the website provides are kept in the phone's Keychain, on this device only. If the app's data reaches another phone anyway, restored from a backup or copied, the app there starts logged out, with nothing of your account.</p>
+
+  <h3>Your phone talks straight to Instagram</h3>
+  <p>Feeds, stories, messages, profiles and activity come straight from Instagram's servers to your phone. Messages, photos, videos, likes and replies you send go straight from your phone to Instagram. None of it passes through any server of ours.</p>
+  <p>Pictures and videos load only from Instagram's own servers for them, never from an address someone put in a message.</p>
+
+  <h3>It collects nothing</h3>
+  <p>Unreeled has no accounts of its own, no analytics, no crash reporting, no advertising and no tracking, and the app contains no third-party code.</p>
+
+  <h3 id="list">The one download is signed</h3>
+  <p>Instagram changes the IDs of the requests its website makes from time to time. To keep working, the app downloads the project's current list of those IDs from unreeled.app, or from GitHub if that fails.</p>
+  <p>The list comes with a signature, and the app uses a list only if one of the keys built into the app signed it. So neither this website nor GitHub can change which requests the app sends, and an older list can't be served again. <a href="https://github.com/Mdavoigneau/Unreeled/blob/main/docs/HOW-IT-WORKS.md">How the app checks it</a>.</p>
+  <p>The download carries nothing about you or your account. Like any web request, it reaches the server with your IP address and the app's version; we don't log these requests or use them to identify anyone.</p>
+
+  <h3>Logging out deletes it</h3>
+  <p>Logging out asks Instagram to end the session, as the website's Log Out does, then deletes from your phone Instagram's cookies, the session values, everything the app saved (screens, conversations, pictures, stories) and the voice messages you recorded. The same happens when the login ends any other way.</p>
+</section>
+
+<section aria-labelledby="notifications">
+  <h2 id="notifications">Notifications</h2>
+  <p>Notifications are off unless you turn them on, and only some builds of Unreeled offer them. They're the one thing that passes through a server of the project's: a relay. Here is why it can't read them.</p>
+
+  <h3>The private key never leaves your phone</h3>
+  <p>When you turn notifications on, your phone makes a pair of keys and a secret, and keeps them in its Keychain, on this device only.</p>
+
+  <h3>Instagram encrypts each notification for your phone</h3>
+  <p>Your phone gives Instagram a push address and the public key, from your own login, as a browser does when you allow notifications on instagram.com. Instagram then encrypts each notification for your phone and sends it to that address.</p>
+
+  <h3>Three stops on the way, none with the key</h3>
+  <p>The address belongs to Mozilla's push service, which hands the encrypted notification to Unreeled's relay, which passes it to Apple's push service, which delivers it to your phone. None of the three can read it. Your phone decrypts it and shows it.</p>
+  <figure class="still">
+    <img src="/video/security-path.png" width="1280" height="720" loading="lazy" alt="A notification's way, as a row of boxes joined by arrows: Instagram, Mozilla's push service, Unreeled's relay, Apple's push service, and a phone. Under Instagram: public key, push address. Under each of the three in the middle, a crossed-out key and the words no key. The phone holds a key in its Keychain and shows the notification. Above it: only your phone can read it.">
+  </figure>
+
+  <h3 id="relay">What the relay knows</h3>
+  <div class="thirds">
+    <div>
+      <h4>It keeps</h4>
+      <ul>
+        <li>A random ID for your phone</li>
+        <li>Your phone's address at Apple's push service</li>
+        <li>The push address</li>
+        <li>When your phone was last seen</li>
+      </ul>
+    </div>
+    <div>
+      <h4>It sees</h4>
+      <ul>
+        <li>When a notification passes</li>
+        <li>How large it is</li>
+      </ul>
+    </div>
+    <div>
+      <h4>It never has</h4>
+      <ul>
+        <li>The keys</li>
+        <li>Your login</li>
+        <li>What a notification says</li>
+        <li>Which Instagram account it's for</li>
+      </ul>
+    </div>
+  </div>
+  <p>Only whoever runs the relay can see those counts and times, and it logs nothing from a notification. The app contacts the relay when you turn notifications on or off, and at most once a day when you open the app, to keep the address current. Like any web request, this reaches the relay with your IP address; we don't log these requests or use them to identify anyone.</p>
+
+  <h3>Turning them off</h3>
+  <p>Turning notifications off, or logging out, deletes the keys from your phone and the relay's record of it. If you delete the app instead, the relay drops the record the first time Apple reports the app gone, or after 30 days without a sign of your phone.</p>
+
+  <h3>Who runs what</h3>
+  <p>The relay runs on Cloudflare. Mozilla, Apple and Cloudflare handle the encrypted notifications under their own privacy policies. If you built Unreeled yourself, the relay is the one your build was made with, run by whoever runs it.</p>
+  <p>The <a href="/privacy">privacy policy</a> has all of this in full.</p>
+</section>
+
+<section aria-labelledby="check">
+  <h2 id="check">Check it yourself</h2>
+  <p>Unreeled is free software under the GNU General Public License, version 3. Everything described here is in <a href="https://github.com/Mdavoigneau/Unreeled">its repository</a>:</p>
+  <ul>
+    <li><a href="https://github.com/Mdavoigneau/Unreeled/blob/main/docs/HOW-IT-WORKS.md">How the app works</a>: the requests it sends, and how the query list is checked.</li>
+    <li><a href="https://github.com/Mdavoigneau/Unreeled/blob/main/docs/NOTIFICATIONS.md">How notifications work</a>: the keys, the encryption, and what's been tried.</li>
+    <li><a href="https://github.com/Mdavoigneau/Unreeled/tree/main/relay">The relay</a>, as a Node program and as a Cloudflare Worker.</li>
+    <li><a href="/privacy">The privacy policy</a>.</li>
+  </ul>
+  <p>Found a security problem? Please write to <a href="mailto:hello@unreeled.app">hello@unreeled.app</a>.</p>
+</section>
+
+<section class="summary" aria-labelledby="caution">
+  <h2 id="caution">One caution</h2>
+  <p>Unreeled isn't made or endorsed by Instagram or Meta. Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it. Use it at your own risk.</p>
+</section>
+
+<section class="faq" aria-labelledby="questions">
+  <h2 id="questions">Questions</h2>
+  <h3>Can Unreeled see my Instagram password?</h3>
+  <p>No. You log in on Instagram's own login page, shown inside the app, and Unreeled never reads or stores your password.</p>
+  <h3>Can the notification relay read my messages?</h3>
+  <p>No. Instagram encrypts each notification for a key that never leaves your phone. The relay passes the encrypted notification on; it sees when one passes and how large it is, never what it says or which account it's for.</p>
+  <h3>Does Unreeled collect any data?</h3>
+  <p>No, unless you turn notifications on; then only what the relay keeps: a random ID for your phone, its address at Apple's push service, the push address, and when it was last seen.</p>
+  <h3>Is Unreeled safe to use?</h3>
+  <p>Your account goes only between your phone and Instagram, as this page describes. The risk is to the account itself: Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it.</p>
+</section>
+
+<p class="next">The video was made with free software, from <a href="https://github.com/Mdavoigneau/Unreeled/tree/main/website/video">files in the repository</a>: its voice is <a href="https://github.com/hexgrad/kokoro">Kokoro</a>, an open text-to-speech model, and its pictures and sounds are drawn by a script.</p>
+
+</article>
+</main>

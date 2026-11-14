@@ -1,0 +1,1131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>How Unreeled keeps your account private: the scenes</title>
+<!--
+  The pictures of the video on unreeled.app/security. This page draws the frame for any moment:
+  seek(seconds). build.py photographs it 30 times a second, and asks it which sound effects go
+  where (window.SOUNDS). Nothing here moves on its own, so a frame is the same every time.
+
+  The timeline comes from the voice (build.py voice): each scene lasts as long as its sentences,
+  and at("scene", "word") is the moment a word is said, which is where animations start.
+
+  Opened in a browser, after `build.py voice` and `build.py sound`, it plays with a slider.
+
+  The look is the app's and the website's (src/style.css): white, hairlines, Helvetica Neue, one
+  steel blue. No logos but Unreeled's own; the icons are drawn here.
+-->
+<style>
+:root {
+  --ink: #262626;
+  --secondary: #737373;
+  --accent: #3F729B;
+  --accent-dark: #2B5273;
+  --accent-light: #6A9BC3;
+  --wash: #EEF3F8;
+  --hairline: #DBDBDB;
+  --field: #EFEFEF;
+  --tray: #FAFAFA;
+  --no: #ED4956;
+}
+html, body { margin: 0; background: #FFFFFF; }
+body { overflow: hidden; }
+#stage {
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: #FFFFFF;
+  color: var(--ink);
+  font: 400 32px/1.25 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transform-origin: 0 0;
+}
+#stage * { box-sizing: border-box; }
+.scene { position: absolute; inset: 0; visibility: hidden; }
+.a { position: absolute; }
+.center { display: flex; align-items: center; justify-content: center; text-align: center; }
+
+.ic { display: block; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.ic.solid { fill: currentColor; }
+.wires { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; fill: none; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.draw { stroke-dasharray: 1; stroke-dashoffset: 1; }
+
+/* The bar on top, flat white with a hairline, as in the app. */
+#bar { position: absolute; left: 0; right: 0; top: 0; height: 100px; border-bottom: 2px solid var(--hairline); background: #FFFFFF; opacity: 0; }
+#bar .icon { position: absolute; left: 64px; top: 22px; width: 56px; height: 56px; }
+#bar .wordmark { position: absolute; left: 138px; top: 27px; height: 46px; }
+#bar .chapter { position: absolute; right: 64px; top: 0; height: 100px; display: flex; align-items: center; color: var(--secondary); font-size: 26px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0; }
+
+.headline { position: absolute; left: 0; right: 0; top: 148px; margin: 0; text-align: center; font-size: 66px; line-height: 1.15; font-weight: 300; letter-spacing: -0.01em; }
+
+/* A plain phone. */
+.phone { position: absolute; width: 300px; height: 610px; border: 5px solid var(--ink); border-radius: 56px; background: #FFFFFF; }
+.phone .screen { position: absolute; inset: 12px; border: 2px solid var(--field); border-radius: 40px; overflow: hidden; background: #FFFFFF; }
+.phone .island { position: absolute; left: 50%; top: 12px; width: 76px; height: 22px; margin-left: -38px; border-radius: 11px; background: var(--ink); }
+
+/* Somewhere a request goes. */
+.node { position: absolute; border: 3px solid var(--ink); border-radius: 22px; background: #FFFFFF; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: 32px; line-height: 1.2; font-weight: 500; }
+.node small { display: block; margin-top: 6px; color: var(--secondary); font-size: 24px; font-weight: 400; }
+
+/* An icon with what it means beside it. */
+.point { position: absolute; display: flex; align-items: center; gap: 30px; }
+.point b { display: block; font-size: 42px; line-height: 1.22; font-weight: 500; }
+.point span { display: block; margin-top: 8px; color: var(--secondary); font-size: 30px; }
+.struck { position: relative; flex: none; }
+.struck .slash { position: absolute; inset: 0; width: 100%; height: 100%; }
+.slash { fill: none; stroke: var(--no); stroke-width: 2; stroke-linecap: round; overflow: visible; }
+
+.pill { position: absolute; display: flex; align-items: center; justify-content: center; gap: 12px; border: 2.5px solid var(--accent); border-radius: 999px; background: #FFFFFF; color: var(--accent-dark); font-size: 26px; font-weight: 500; white-space: nowrap; }
+.badge { position: absolute; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #FFFFFF; }
+
+/* A switch, flat. */
+.switch { position: absolute; border-radius: 999px; background: var(--hairline); }
+.switch i { position: absolute; border-radius: 50%; background: #FFFFFF; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+
+.card { position: absolute; border: 3px solid var(--ink); border-radius: 24px; background: #FFFFFF; }
+.card header { display: flex; align-items: center; gap: 18px; height: 96px; padding: 0 36px; border-bottom: 2px solid var(--hairline); font-size: 40px; font-weight: 500; }
+.rows { margin: 0; padding: 14px 36px; list-style: none; }
+.rows li { display: flex; align-items: center; gap: 18px; height: 84px; font-size: 31px; white-space: nowrap; }
+.rows li + li { border-top: 2px solid var(--field); }
+.rows .ic { flex: none; width: 34px; height: 34px; stroke-width: 2; }
+
+/* Only when looked at in a browser. */
+#controls { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: rgba(38, 38, 38, 0.92); color: #FFFFFF; font: 14px "Helvetica Neue", sans-serif; }
+#controls input { flex: 1; }
+#controls button { font: inherit; padding: 4px 14px; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+<!-- 1. The title -->
+<section class="scene" id="title">
+  <img class="a" id="title-icon" src="../public/images/icon-384.png" alt="" style="left:850px;top:240px;width:220px;height:220px">
+  <img class="a" id="title-wordmark" src="../public/images/wordmark.svg" alt="Unreeled" style="left:690px;top:492px;width:540px;height:110.5px">
+  <div class="a" id="title-tag" style="left:0;right:0;top:642px;text-align:center;color:var(--secondary);font-size:40px">An open-source app for Instagram</div>
+  <div class="a" id="title-how" style="left:0;right:0;top:730px;text-align:center;font-size:68px;font-weight:300;letter-spacing:-0.01em">How it keeps your account private</div>
+</section>
+
+<!-- 2. Logging in -->
+<section class="scene" id="login">
+  <h1 class="headline">You log in on Instagram's own page</h1>
+  <div class="phone" id="login-phone" style="left:420px;top:330px">
+    <div class="screen">
+      <div class="island"></div>
+      <div class="a center" id="login-address" style="left:20px;right:20px;top:52px;height:42px;gap:8px;border-radius:21px;background:var(--field);font-size:21px">
+        <svg class="ic" data-i="lock" style="width:20px;height:20px;color:var(--accent);stroke-width:2.2"></svg>instagram.com
+      </div>
+      <div class="a" style="left:0;right:0;top:128px;text-align:center;font-size:30px;font-weight:300">Log in</div>
+      <div class="a" style="left:22px;right:22px;top:196px;height:48px;padding:0 14px;border:2px solid var(--hairline);border-radius:8px;background:var(--tray);font-size:20px;line-height:44px;color:var(--secondary)" id="login-name"></div>
+      <div class="a" id="login-pass" style="left:22px;right:22px;top:254px;height:48px;padding:0 14px;border:2px solid var(--hairline);border-radius:8px;background:var(--tray);display:flex;align-items:center;gap:7px"></div>
+      <div class="a center" style="left:22px;right:22px;top:318px;height:48px;border-radius:8px;background:var(--accent);color:#FFFFFF;font-size:20px;font-weight:500">Log in</div>
+    </div>
+  </div>
+  <div class="point" id="login-own" style="left:850px;top:440px">
+    <svg class="ic" data-i="checkCircle" style="flex:none;width:76px;height:76px;color:var(--accent)"></svg>
+    <div><b>Instagram's own login page</b><span>shown inside the app</span></div>
+  </div>
+  <div class="point" id="login-never" style="left:850px;top:640px">
+    <div class="struck" style="width:76px;height:76px">
+      <svg class="ic" data-i="eye" style="width:76px;height:76px"></svg>
+      <svg class="slash" viewBox="0 0 24 24"><path class="draw" id="login-slash" pathLength="1" d="M3.5 3.5l17 17"/></svg>
+    </div>
+    <div><b>Unreeled never reads or stores<br>your password</b></div>
+  </div>
+</section>
+
+<!-- 3. Straight to Instagram -->
+<section class="scene" id="direct">
+  <h1 class="headline">Your phone talks straight to Instagram</h1>
+  <svg class="wires" viewBox="0 0 1920 1080">
+    <path class="draw" id="direct-out" pathLength="1" d="M580 608H1310" stroke="var(--accent)" stroke-width="4"/>
+    <path class="draw" id="direct-back" pathLength="1" d="M1310 662H580" stroke="var(--accent)" stroke-width="4"/>
+    <path id="direct-out-head" d="M1294 592l18 16-18 16" stroke="var(--accent)" stroke-width="4"/>
+    <path id="direct-back-head" d="M596 646l-18 16 18 16" stroke="var(--accent)" stroke-width="4"/>
+    <path class="draw" id="direct-stub" pathLength="1" d="M945 676V790" stroke="var(--secondary)" stroke-width="3" stroke-dasharray="0.09 0.09"/>
+  </svg>
+  <div class="phone" id="direct-phone" style="left:250px;top:330px">
+    <div class="screen" id="direct-feed">
+      <div class="island"></div>
+    </div>
+  </div>
+  <div class="node" id="direct-instagram" style="left:1330px;top:535px;width:340px;height:200px">Instagram<small>instagram.com</small></div>
+  <div id="direct-tokens"></div>
+  <div class="a" id="direct-ours" style="left:785px;top:790px;width:320px;height:112px">
+    <div class="a center" style="inset:0;gap:16px;border:3px dashed var(--secondary);border-radius:20px;background:#FFFFFF;color:var(--secondary);font-size:30px">
+      <svg class="ic" data-i="server" style="width:44px;height:44px"></svg>A server of ours
+    </div>
+    <svg class="slash a" viewBox="0 0 320 112" style="inset:0;width:320px;height:112px;stroke-width:6"><path class="draw" id="direct-strike" pathLength="1" d="M22 96L298 16"/></svg>
+  </div>
+  <div class="a" id="direct-none" style="left:645px;top:505px;width:600px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">Nothing in between</div>
+</section>
+
+<!-- 4. Collects nothing -->
+<section class="scene" id="nothing">
+  <h1 class="headline">Unreeled collects <span id="nothing-word" style="position:relative;display:inline-block">nothing<svg class="a" viewBox="0 0 100 10" preserveAspectRatio="none" style="left:0;bottom:-10px;width:100%;height:12px;fill:none;stroke:var(--accent);stroke-width:3;overflow:visible"><path id="nothing-line" d="M1 6C30 2 70 2 99 6" vector-effect="non-scaling-stroke" stroke-width="5" stroke-linecap="round"/></svg></span> about you</h1>
+  <div id="nothing-cards"></div>
+</section>
+
+<!-- 5. The one download -->
+<section class="scene" id="list">
+  <h1 class="headline">One download, signed by the project</h1>
+  <svg class="wires" viewBox="0 0 1920 1080">
+    <path class="draw" id="list-wire" pathLength="1" d="M1320 635H580" stroke="var(--hairline)" stroke-width="4"/>
+  </svg>
+  <div class="phone" id="list-phone" style="left:250px;top:330px">
+    <div class="screen"><div class="island"></div>
+      <div class="a center" style="left:0;right:0;top:230px"><img src="../public/images/icon-384.png" alt="" style="width:96px;height:96px"></div>
+    </div>
+  </div>
+  <div class="node" id="list-site" style="left:1330px;top:535px;width:340px;height:200px">unreeled.app<small>the project</small></div>
+  <div class="a" id="list-fake" style="left:0;top:0;width:150px;height:190px">
+    <div class="a" style="inset:0;border:3px dashed var(--secondary);border-radius:14px;background:#FFFFFF"></div>
+    <div class="a center" style="inset:0;color:var(--secondary);font-size:84px;font-weight:300">?</div>
+  </div>
+  <div class="a" id="list-doc" style="left:0;top:0;width:150px;height:190px">
+    <div class="a" style="inset:0;border:3px solid var(--ink);border-radius:14px;background:#FFFFFF"></div>
+    <div class="a" style="left:24px;top:30px;width:70px;height:10px;border-radius:5px;background:var(--ink)"></div>
+    <div class="a" style="left:24px;top:62px;width:102px;height:8px;border-radius:4px;background:var(--hairline)"></div>
+    <div class="a" style="left:24px;top:84px;width:86px;height:8px;border-radius:4px;background:var(--hairline)"></div>
+    <div class="a" style="left:24px;top:106px;width:98px;height:8px;border-radius:4px;background:var(--hairline)"></div>
+    <div class="a" style="left:24px;top:128px;width:60px;height:8px;border-radius:4px;background:var(--hairline)"></div>
+    <div class="badge" id="list-seal" style="left:84px;top:118px;width:88px;height:88px;background:var(--accent);color:#FFFFFF">
+      <svg class="ic" data-i="check" style="width:50px;height:50px;stroke-width:2.6"></svg>
+    </div>
+  </div>
+  <div class="a" id="list-what" style="left:560px;top:770px;width:800px;text-align:center;font-size:34px;font-weight:500">The list of Instagram's request IDs</div>
+  <div class="a" id="list-signed" style="left:560px;top:820px;width:800px;text-align:center;font-size:30px;color:var(--accent-dark)">signed by the project</div>
+  <div class="pill" id="list-ok" style="left:600px;top:500px;width:300px;height:58px;border-color:var(--accent);background:var(--accent);color:#FFFFFF">
+    <svg class="ic" data-i="check" style="width:28px;height:28px;stroke-width:2.6"></svg>Signature checked
+  </div>
+  <div class="pill" id="list-no" style="left:790px;top:821px;width:330px;height:58px;border-color:var(--no);color:var(--no)">
+    <svg class="ic" data-i="x" style="width:26px;height:26px;stroke-width:2.6"></svg>Not signed: refused
+  </div>
+</section>
+
+<!-- 6. Logging out -->
+<section class="scene" id="logout">
+  <h1 class="headline">Log out, and it's deleted from your phone</h1>
+  <div class="phone" id="logout-phone" style="left:470px;top:330px">
+    <div class="screen" id="logout-tiles"><div class="island"></div></div>
+  </div>
+  <div id="logout-rows"></div>
+</section>
+
+<!-- 7. Notifications are a choice -->
+<section class="scene" id="notifications">
+  <h1 class="headline">Notifications are optional</h1>
+  <div class="a" id="notifications-row" style="left:510px;top:322px;width:900px;height:132px;border:3px solid var(--ink);border-radius:24px;background:#FFFFFF">
+    <svg class="ic a" data-i="bell" style="left:38px;top:36px;width:60px;height:60px;color:var(--accent)"></svg>
+    <div class="a" style="left:124px;top:24px;font-size:42px;font-weight:500">Notifications</div>
+    <div class="a" style="left:124px;top:78px;font-size:27px;color:var(--secondary)">Off unless you turn them on</div>
+    <div class="switch" id="notifications-switch" style="right:36px;top:33px;width:116px;height:66px"><i style="left:5px;top:5px;width:56px;height:56px"></i></div>
+  </div>
+  <svg class="wires" viewBox="0 0 1920 1080">
+    <path class="draw" id="notifications-in" pathLength="1" d="M650 700H790" stroke="var(--ink)" stroke-width="4"/>
+    <path id="notifications-in-head" d="M774 684l18 16-18 16" stroke="var(--ink)" stroke-width="4"/>
+    <path class="draw" id="notifications-on" pathLength="1" d="M1130 700H1270" stroke="var(--ink)" stroke-width="4"/>
+    <path id="notifications-on-head" d="M1254 684l18 16-18 16" stroke="var(--ink)" stroke-width="4"/>
+  </svg>
+  <div class="node" id="notifications-instagram" style="left:350px;top:620px;width:300px;height:160px">Instagram</div>
+  <div class="node" id="notifications-relay" style="left:810px;top:620px;width:300px;height:160px;border-color:var(--accent);background:var(--wash);color:var(--accent-dark)">Unreeled's<br>relay</div>
+  <div class="node" id="notifications-phone" style="left:1270px;top:620px;width:300px;height:160px">Your phone</div>
+  <div class="badge" id="notifications-blind" style="left:912px;top:508px;width:96px;height:96px;border:3px solid var(--ink)">
+    <div class="struck" style="width:56px;height:56px">
+      <svg class="ic" data-i="eye" style="width:56px;height:56px"></svg>
+      <svg class="slash" viewBox="0 0 24 24"><path class="draw" id="notifications-slash" pathLength="1" d="M3.5 3.5l17 17"/></svg>
+    </div>
+  </div>
+  <div class="a" id="notifications-cant" style="left:660px;top:812px;width:600px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">It passes them on. It can't read them.</div>
+</section>
+
+<!-- 8 and 9. The keys, then the way a notification takes -->
+<section class="scene" id="chain">
+  <h1 class="headline" id="chain-headline-keys">The private key never leaves your phone</h1>
+  <h1 class="headline" id="chain-headline-path">Encrypted for your phone, all the way</h1>
+  <svg class="wires" viewBox="0 0 1920 1080" id="chain-wires"></svg>
+  <div class="node" id="chain-instagram" style="left:110px;top:555px;width:280px;height:170px">Instagram</div>
+  <div class="node" id="chain-mozilla" style="left:470px;top:555px;width:250px;height:170px;font-size:30px">Mozilla's<br>push service</div>
+  <div class="node" id="chain-relay" style="left:800px;top:555px;width:250px;height:170px;font-size:30px;border-color:var(--accent);background:var(--wash);color:var(--accent-dark)">Unreeled's<br>relay</div>
+  <div class="node" id="chain-apple" style="left:1130px;top:555px;width:250px;height:170px;font-size:30px">Apple's<br>push service</div>
+  <div class="phone" id="chain-phone" style="left:1510px;top:335px">
+    <div class="screen">
+      <div class="island"></div>
+      <div class="a" id="chain-clock" style="left:0;right:0;top:70px;text-align:center;font-size:76px;font-weight:200;line-height:1">9:41</div>
+      <div class="a" id="chain-banner" style="left:12px;top:176px;width:248px;height:92px;border:2px solid var(--hairline);border-radius:22px;background:#FFFFFF;box-shadow:0 6px 18px rgba(0,0,0,0.10)">
+        <div class="a" style="left:14px;top:20px;width:48px;height:48px;border-radius:50%;background:var(--accent-light)"></div>
+        <div class="a" style="left:74px;top:17px;font-size:21px;font-weight:500">Sam</div>
+        <div class="a" style="left:74px;top:46px;font-size:21px;color:var(--ink)">See you at 8?</div>
+      </div>
+      <svg class="ic a" id="chain-public" data-i="key" style="left:146px;top:210px;width:86px;height:86px;color:var(--accent)"></svg>
+      <div class="a" id="chain-public-label" style="left:136px;top:304px;width:106px;text-align:center;font-size:20px;color:var(--accent-dark)">public</div>
+      <div class="a" id="chain-private-label" style="left:30px;top:304px;width:106px;text-align:center;font-size:20px">private</div>
+      <div class="a" id="chain-keychain" style="left:22px;top:430px;width:228px;height:116px;border:2px solid var(--hairline);border-radius:20px;background:var(--tray)">
+        <div class="a" style="left:0;right:0;top:82px;text-align:center;font-size:19px;color:var(--secondary)">Keychain</div>
+        <svg class="ic a" id="chain-keylock" data-i="lock" style="right:14px;top:12px;width:28px;height:28px;stroke-width:2"></svg>
+      </div>
+      <svg class="ic a" id="chain-private" data-i="keySolid" style="left:40px;top:210px;width:86px;height:86px"></svg>
+    </div>
+  </div>
+  <div class="a" id="chain-callout" style="left:980px;top:792px;width:500px;text-align:right">
+    <div style="font-size:40px;font-weight:500">The private key</div>
+    <div style="margin-top:6px;font-size:30px;color:var(--secondary)">stays in the phone's Keychain</div>
+  </div>
+  <div class="pill" id="chain-pill-key" style="left:0;top:0;width:280px;height:58px"><svg class="ic" data-i="key" style="width:30px;height:30px;stroke-width:2"></svg>Public key</div>
+  <div class="pill" id="chain-pill-address" style="left:0;top:0;width:280px;height:58px"><svg class="ic" data-i="pin" style="width:28px;height:28px;stroke-width:2"></svg>Push address</div>
+  <div class="a" id="chain-browser" style="left:30px;top:888px;width:440px;text-align:center;font-size:27px;color:var(--secondary)">from your own login,<br>as a browser does</div>
+  <div id="chain-nokeys"></div>
+  <div class="a" id="chain-parcel" style="left:0;top:0;width:260px;height:80px">
+    <div class="a center" id="chain-bubble" style="inset:0;border:3px solid var(--ink);border-radius:26px;background:#FFFFFF;font-size:30px">See you at 8?</div>
+    <div class="a center" id="chain-cipher" style="inset:0;gap:14px;border-radius:26px;background:var(--accent);color:#FFFFFF;font:500 27px Menlo, monospace">
+      <svg class="ic" data-i="lock" style="width:34px;height:34px;stroke-width:2"></svg>9f·3a·c2·7e
+    </div>
+  </div>
+  <div class="a" id="chain-ring" style="left:1500px;top:325px;width:320px;height:630px;border:5px solid var(--accent);border-radius:64px"></div>
+  <div class="a" id="chain-only" style="left:1410px;top:252px;width:500px;text-align:center;font-size:34px;font-weight:500;color:var(--accent-dark)">Only your phone can read it</div>
+</section>
+
+<!-- 10. What the relay knows -->
+<section class="scene" id="relay">
+  <h1 class="headline">What the relay knows</h1>
+  <div class="card" id="relay-keeps" style="left:120px;top:322px;width:600px;height:462px;border-color:var(--accent)">
+    <header style="color:var(--accent-dark)"><svg class="ic" data-i="server" style="width:46px;height:46px"></svg>It keeps</header>
+    <ul class="rows" data-icon="dot" data-color="var(--accent)">
+      <li>A random ID</li><li>Your phone's address at Apple</li><li>The push address</li><li>When your phone was last seen</li>
+    </ul>
+  </div>
+  <div class="card" id="relay-sees" style="left:750px;top:322px;width:500px;height:294px">
+    <header><svg class="ic" data-i="eye" style="width:46px;height:46px"></svg>It sees</header>
+    <ul class="rows" data-icon="dot" data-color="var(--ink)">
+      <li>When a notification passes</li><li>How large it is</li>
+    </ul>
+  </div>
+  <div class="card" id="relay-never" style="left:1280px;top:322px;width:520px;height:462px">
+    <header>
+      <div class="struck" style="width:46px;height:46px"><svg class="ic" data-i="eye" style="width:46px;height:46px"></svg><svg class="slash" viewBox="0 0 24 24"><path d="M3.5 3.5l17 17"/></svg></div>Never
+    </header>
+    <ul class="rows" data-icon="x" data-color="var(--no)">
+      <li>Your keys</li><li>Your login</li><li>What a notification says</li><li>Whose account it is</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 11. Turning them off -->
+<section class="scene" id="off">
+  <h1 class="headline">Turn them off, and the relay forgets you</h1>
+  <svg class="wires" viewBox="0 0 1920 1080">
+    <path class="draw" id="off-wire" pathLength="1" d="M700 610H960" stroke="var(--hairline)" stroke-width="4"/>
+  </svg>
+  <div class="pill" id="off-forget" style="left:0;top:0;width:240px;height:56px">Forget this phone</div>
+  <div class="phone" id="off-phone" style="left:390px;top:330px">
+    <div class="screen">
+      <div class="island"></div>
+      <div class="a" style="left:18px;top:74px;font-size:22px;font-weight:500">Notifications</div>
+      <div class="switch" id="off-switch" style="right:18px;top:66px;width:74px;height:42px"><i style="left:4px;top:4px;width:34px;height:34px"></i></div>
+      <div class="a" style="left:18px;right:18px;top:124px;height:2px;background:var(--field)"></div>
+      <div class="a" id="off-keychain" style="left:22px;top:300px;width:228px;height:170px;border:2px solid var(--hairline);border-radius:20px;background:var(--tray)">
+        <div class="a" style="left:0;right:0;top:132px;text-align:center;font-size:19px;color:var(--secondary)">Keychain</div>
+        <svg class="ic a" id="off-key" data-i="keySolid" style="left:72px;top:26px;width:84px;height:84px"></svg>
+      </div>
+    </div>
+  </div>
+  <div class="card" id="off-relay" style="left:970px;top:330px;width:580px;height:462px;border-color:var(--accent)">
+    <header style="color:var(--accent-dark)"><svg class="ic" data-i="server" style="width:46px;height:46px"></svg>Unreeled's relay</header>
+    <ul class="rows" data-icon="dot" data-color="var(--accent)">
+      <li>A random ID</li><li>Your phone's address at Apple</li><li>The push address</li><li>When your phone was last seen</li>
+    </ul>
+    <div class="a center" id="off-empty" style="left:0;right:0;top:96px;bottom:0;color:var(--secondary);font-size:34px">Nothing about your phone</div>
+  </div>
+</section>
+
+<!-- 12. In the open -->
+<section class="scene" id="open">
+  <h1 class="headline">Open source, for anyone to check</h1>
+  <div class="card" id="open-app" style="left:290px;top:322px;width:640px;height:440px"><header>The app<small style="margin-left:auto;color:var(--secondary);font-size:26px;font-weight:400">Swift</small></header><div class="code"></div></div>
+  <div class="card" id="open-relay" style="left:990px;top:322px;width:640px;height:440px"><header>The relay<small style="margin-left:auto;color:var(--secondary);font-size:26px;font-weight:400">JavaScript</small></header><div class="code"></div></div>
+  <div class="badge" id="open-ok-app" style="left:894px;top:290px;width:68px;height:68px;background:var(--accent);color:#FFFFFF"><svg class="ic" data-i="check" style="width:38px;height:38px;stroke-width:2.6"></svg></div>
+  <div class="badge" id="open-ok-relay" style="left:1594px;top:290px;width:68px;height:68px;background:var(--accent);color:#FFFFFF"><svg class="ic" data-i="check" style="width:38px;height:38px;stroke-width:2.6"></svg></div>
+  <svg class="ic a" id="open-glass" data-i="search" style="left:0;top:0;width:150px;height:150px;stroke-width:1.3;color:var(--accent)"></svg>
+  <div class="a center" id="open-where" style="left:0;right:0;top:806px;gap:24px;font:400 36px Menlo, monospace">
+    github.com/Mdavoigneau/Unreeled
+    <span style="padding:6px 18px;border:2.5px solid var(--accent);border-radius:999px;color:var(--accent-dark);font:500 26px 'Helvetica Neue', sans-serif">GPL-3.0</span>
+  </div>
+</section>
+
+<!-- 13. One caution, and where to read more -->
+<section class="scene" id="caution">
+  <h1 class="headline" id="caution-headline">One caution</h1>
+  <div class="a" id="caution-notice" style="left:330px;top:322px;width:1260px;height:470px;border:2px solid var(--hairline);border-radius:16px;background:var(--tray)">
+    <svg class="ic a" data-i="warning" style="left:64px;top:56px;width:72px;height:72px;color:var(--accent)"></svg>
+    <div class="a" style="left:164px;top:60px;font-size:54px;font-weight:500">Unofficial</div>
+    <p class="a" id="caution-1" style="left:64px;top:164px;width:1130px;margin:0;font-size:38px;line-height:1.38">Unreeled isn't made or endorsed by Instagram or Meta.</p>
+    <p class="a" id="caution-2" style="left:64px;top:236px;width:1130px;margin:0;font-size:38px;line-height:1.38">Instagram doesn't approve apps like this one, and it could restrict or disable an account that uses it.</p>
+    <p class="a" id="caution-3" style="left:64px;top:372px;width:1130px;margin:0;font-size:38px;line-height:1.38;font-weight:500">Use it at your own risk.</p>
+  </div>
+  <div class="a" id="caution-end" style="inset:0">
+    <img class="a" id="end-icon" src="../public/images/icon-384.png" alt="" style="left:860px;top:236px;width:200px;height:200px">
+    <img class="a" id="end-wordmark" src="../public/images/wordmark.svg" alt="Unreeled" style="left:715px;top:466px;width:490px;height:100.3px">
+    <div class="a" id="end-site" style="left:0;right:0;top:620px;text-align:center;font-size:72px;font-weight:300;color:var(--accent-dark);letter-spacing:-0.01em">unreeled.app</div>
+    <div class="a" id="end-more" style="left:0;right:0;top:742px;text-align:center;font-size:32px;color:var(--secondary)">The privacy policy, and every line of the code</div>
+  </div>
+</section>
+
+<header id="bar">
+  <img class="icon" src="../public/images/icon-384.png" alt="">
+  <img class="wordmark" src="../public/images/wordmark.svg" alt="Unreeled">
+  <div class="chapter" id="chapter-app">The app</div>
+  <div class="chapter" id="chapter-notifications">Notifications</div>
+  <div class="chapter" id="chapter-open">In the open</div>
+</header>
+
+</div>
+
+<script src=".build/timeline.js" onerror="void 0"></script>
+<script>
+"use strict";
+
+// MARK: Icons, drawn on a 24 by 24 grid
+
+const ICONS = {
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  key: '<circle cx="7.5" cy="16.5" r="4.5"/><path d="M10.8 13.2L20.5 3.5M17 7l3 3M14 10l2.4 2.4"/>',
+  keySolid: '<circle cx="7.5" cy="16.5" r="4.5" fill="currentColor"/><circle cx="7.5" cy="16.5" r="1.3" fill="#FAFAFA" stroke="none"/><path d="M10.8 13.2L20.5 3.5M17 7l3 3M14 10l2.4 2.4" stroke-width="2.2"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  checkCircle: '<circle cx="12" cy="12" r="9.5"/><path d="M7.5 12.5l3 3 6-6.5"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  dot: '<circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none"/>',
+  bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+  server: '<rect x="3" y="4" width="18" height="7" rx="1.8"/><rect x="3" y="13" width="18" height="7" rx="1.8"/><path d="M7 7.5h.01M7 16.5h.01" stroke-width="2.4"/>',
+  chart: '<path d="M6 19v-6M12 19V6M18 19v-9M3 19.5h18"/>',
+  target: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>',
+  ad: '<rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M6.4 15l2.3-6 2.3 6M7.3 13.1h2.8M13.7 9v6h1.1a3 3 0 0 0 0-6h-1.1z"/>',
+  photo: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 15.5l-5-5-9 9"/>',
+  bubble: '<path d="M4 5h16v11H10.5L6 19.5V16H4z"/>',
+  heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V21"/>',
+  person: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
+  warning: '<path d="M12 3.5L2 20.5h20L12 3.5z"/><path d="M12 10v5M12 17.6h.01"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M20.5 20.5l-5.2-5.2"/>',
+  pin: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+};
+
+const $ = (id) => document.getElementById(id);
+
+/** Lists marked with data-icon get that icon before each row. */
+function fillRows() {
+  for (const list of document.querySelectorAll("ul.rows[data-icon]")) {
+    for (const row of list.children) {
+      row.insertAdjacentHTML("afterbegin", `<svg class="ic" data-i="${list.dataset.icon}" style="color:${list.dataset.color}"></svg>`);
+    }
+  }
+}
+
+function fillIcons(root = document) {
+  for (const svg of root.querySelectorAll("svg.ic:not([viewBox])")) {
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.innerHTML = ICONS[svg.dataset.i];
+  }
+}
+
+// MARK: Time
+
+const TIMELINE = window.TIMELINE;
+const narration = Object.fromEntries(TIMELINE.scenes.map((scene) => [scene.id, scene]));
+const plain = (word) => word.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** When a word of a scene is said: its start, or with "e" its end. `nth` picks among repeats. */
+function at(scene, word, nth = 0, edge = "s") {
+  const found = narration[scene].words.filter((entry) => "s" in entry && plain(entry.w) === plain(word))[nth];
+  if (!found) throw new Error(`The scene "${scene}" has no "${word}" (${nth}): did narration.json change?`);
+  return found[edge];
+}
+
+const clamp = (value, low = 0, high = 1) => Math.min(high, Math.max(low, value));
+const mix = (from, to, k) => from + (to - from) * k;
+const ease = {
+  out: (k) => 1 - (1 - k) ** 3,
+  in: (k) => k ** 3,
+  inOut: (k) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2),
+  back: (k) => 1 + 2.7 * (k - 1) ** 3 + 1.7 * (k - 1) ** 2,
+};
+/** 0 until `start`, 1 from `start + length`, eased between. */
+const ramp = (t, start, length = 0.5, curve = ease.out) => curve(clamp((t - start) / length));
+/** 0, up to 1 at the middle, back to 0: one beat. */
+const beat = (t, start, length = 0.5) => Math.sin(Math.PI * clamp((t - start) / length));
+
+function place(node, { o, x = 0, y = 0, s = 1, r = 0 } = {}) {
+  if (o !== undefined) node.style.opacity = o;
+  node.style.transform = `translate(${x}px, ${y}px) rotate(${r}deg) scale(${s})`;
+}
+/** Fades in while coming up into place. */
+const rise = (node, k, distance = 26) => place(node, { o: k, y: (1 - k) * distance });
+/** Appears with a small bounce. */
+function pop(node, t, start, length = 0.42) {
+  const k = clamp((t - start) / length);
+  place(node, { o: clamp(k * 4), s: 0.72 + 0.28 * ease.back(k) });
+}
+/** Draws a path with class "draw" up to `k` of its length. */
+const draw = (path, k) => (path.style.strokeDashoffset = 1 - k);
+/** Shows something from its left edge up to `k` of its width. */
+const reveal = (node, k) => (node.style.clipPath = `inset(-12px ${(1 - k) * 100}% -12px 0)`);
+
+// MARK: Sounds, for build.py to make
+
+const SOUNDS = [];
+/** A sound effect at a moment. `x` is where on the picture it happens, for left and right. */
+function sound(t, name, gain = 1, x = 960) {
+  SOUNDS.push({ t: Math.max(0, +t.toFixed(3)), name, gain, pan: +(((x - 960) / 960) * 0.55).toFixed(2) });
+}
+
+// MARK: Scenes
+
+const scenes = [];
+/** A scene shows from `from` to `to`, fading in and out, and draws itself for any moment. */
+function scene(id, from, to, { setup, draw: drawScene, holds = false }) {
+  const node = $(id);
+  const state = { id, from, to, node };
+  setup?.(state);
+  scenes.push({ ...state, state, drawScene, holds });
+}
+
+const first = (id) => narration[id].start;
+const last = (id) => narration[id].end;
+
+// 1. The title
+
+scene("title", first("title"), last("title"), {
+  setup(s) {
+    s.tag = at("title", "open-source") - 0.15;
+    s.how = at("title", "Here's") - 0.1;
+    sound(s.from + 0.05, "swell");
+    sound(s.from + 0.55, "pop", 0.6);
+    sound(s.how, "pop", 0.5);
+  },
+  draw(t, s) {
+    pop($("title-icon"), t, s.from + 0.12, 0.7);
+    rise($("title-wordmark"), ramp(t, s.from + 0.5, 0.6));
+    rise($("title-tag"), ramp(t, s.tag, 0.5));
+    rise($("title-how"), ramp(t, s.how, 0.55));
+  },
+});
+
+// 2. Logging in
+
+scene("login", first("login"), last("login"), {
+  setup(s) {
+    for (let index = 0; index < 8; index++) {
+      $("login-pass").insertAdjacentHTML("beforeend", '<i style="width:11px;height:11px;border-radius:50%;background:var(--ink);opacity:0"></i>');
+    }
+    s.dots = [...$("login-pass").children];
+    s.own = at("login", "own") - 0.1;
+    s.never = at("login", "never") - 0.1;
+    s.typing = at("login", "log");
+    s.password = at("login", "password");
+    sound(s.own, "pop", 1, 1100);
+    sound(s.never, "pop", 1, 1100);
+    sound(s.never + 0.25, "thud", 0.45, 900);
+    s.dots.forEach((dot, index) => sound(s.typing + 0.9 + index * 0.13, "tick", 0.7, 570));
+    sound(s.password, "lock", 0.8, 570);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("login-phone"), ramp(t, s.from + 0.1, 0.6), 40);
+    const typed = Math.floor(clamp((t - s.typing) / 0.6) * 3);
+    $("login-name").textContent = "you".slice(0, typed);
+    s.dots.forEach((dot, index) => (dot.style.opacity = t >= s.typing + 0.9 + index * 0.13 ? 1 : 0));
+    const address = beat(t, at("login", "Instagram's") - 0.1, 0.9);
+    $("login-address").style.boxShadow = `0 0 0 ${3 * address}px var(--accent)`;
+    rise($("login-own"), ramp(t, s.own), 22);
+    rise($("login-never"), ramp(t, s.never), 22);
+    draw($("login-slash"), ramp(t, s.never + 0.25, 0.3));
+    const guarded = ramp(t, s.password, 0.3);
+    $("login-pass").style.borderColor = guarded > 0 ? "var(--accent)" : "var(--hairline)";
+    $("login-pass").style.boxShadow = `0 0 0 ${2 * guarded}px var(--accent)`;
+  },
+});
+
+// 3. Straight to Instagram
+
+scene("direct", first("direct"), last("direct"), {
+  setup(s) {
+    // The phone shows a feed, as shapes: stories, then a post.
+    const feed = $("direct-feed");
+    let html = "";
+    for (let index = 0; index < 4; index++) {
+      html += `<div class="a" style="left:${16 + index * 62}px;top:52px;width:50px;height:50px;border:3px solid var(--accent);border-radius:50%"><div class="a" style="inset:3px;border-radius:50%;background:var(--field)"></div></div>`;
+    }
+    html += '<div class="a" style="left:0;right:0;top:116px;height:2px;background:var(--field)"></div>';
+    html += '<div class="a" style="left:16px;top:132px;width:34px;height:34px;border-radius:50%;background:var(--field)"></div>';
+    html += '<div class="a" style="left:60px;top:144px;width:96px;height:10px;border-radius:5px;background:var(--hairline)"></div>';
+    html += '<div class="a center" style="left:0;right:0;top:178px;height:232px;background:var(--tray);border-top:2px solid var(--field);border-bottom:2px solid var(--field);color:var(--hairline)"><svg class="ic" data-i="photo" style="width:92px;height:92px"></svg></div>';
+    html += '<svg class="ic a" data-i="heart" style="left:16px;top:424px;width:32px;height:32px"></svg><svg class="ic a" data-i="bubble" style="left:60px;top:424px;width:32px;height:32px"></svg>';
+    html += '<div class="a" style="left:16px;top:472px;width:170px;height:10px;border-radius:5px;background:var(--hairline)"></div>';
+    html += '<div class="a" style="left:16px;top:494px;width:120px;height:10px;border-radius:5px;background:var(--hairline)"></div>';
+    feed.insertAdjacentHTML("beforeend", html);
+
+    // What goes each way: yours to Instagram on the upper line, Instagram's to you on the lower.
+    const kinds = [
+      { icon: "bubble", out: true, phase: 0 },
+      { icon: "photo", out: false, phase: 0.2 },
+      { icon: "heart", out: true, phase: 0.5 },
+      { icon: "person", out: false, phase: 0.7 },
+    ];
+    s.tokens = kinds.map((kind) => {
+      $("direct-tokens").insertAdjacentHTML(
+        "beforeend",
+        `<div class="badge" style="left:-32px;top:${kind.out ? 576 : 630}px;width:64px;height:64px;border:3px solid var(--accent);color:var(--accent)"><svg class="ic" data-i="${kind.icon}" style="width:34px;height:34px;stroke-width:1.8"></svg></div>`,
+      );
+      return { ...kind, node: $("direct-tokens").lastElementChild };
+    });
+    s.talks = at("direct", "talks") - 0.15;
+    s.nothing = at("direct", "Nothing") - 0.1;
+    s.server = at("direct", "server");
+    s.ours = at("direct", "ours", 0, "e");
+    sound(s.talks, "whoosh", 1, 960);
+    sound(s.talks + 0.75, "hop", 0.6, 700);
+    sound(s.talks + 1.35, "hop", 0.5, 1200);
+    sound(s.nothing, "pop", 0.8, 945);
+    sound(s.server + 0.1, "thud", 1, 945);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("direct-phone"), ramp(t, s.from + 0.1, 0.6), 40);
+    rise($("direct-instagram"), ramp(t, s.from + 0.25, 0.6), 40);
+    const drawn = ramp(t, s.talks, 0.6, ease.inOut);
+    draw($("direct-out"), drawn);
+    draw($("direct-back"), drawn);
+    $("direct-out-head").style.opacity = $("direct-back-head").style.opacity = ramp(t, s.talks + 0.5, 0.2);
+    for (const token of s.tokens) {
+      const along = (((t - s.talks - 0.5) / 2.6 + token.phase) % 1 + 1) % 1;
+      const x = token.out ? mix(600, 1290, along) : mix(1290, 600, along);
+      place(token.node, { o: ramp(t, s.talks + 0.55, 0.3) * clamp(Math.min(along, 1 - along) * 9), x });
+    }
+    const hypothetical = ramp(t, s.nothing, 0.45);
+    const struck = ramp(t, s.server + 0.1, 0.3);
+    place($("direct-ours"), { o: hypothetical * mix(1, 0.45, ramp(t, s.server + 0.5, 0.5)), y: (1 - hypothetical) * 20 });
+    draw($("direct-stub"), hypothetical * (1 - ramp(t, s.server + 0.3, 0.4)));
+    draw($("direct-strike"), struck);
+    rise($("direct-none"), ramp(t, s.ours - 0.5, 0.45), 16);
+  },
+});
+
+// 4. Collects nothing
+
+scene("nothing", first("nothing"), last("nothing"), {
+  setup(s) {
+    const cards = [
+      { icon: "chart", label: "No analytics" },
+      { icon: "target", label: "No tracking" },
+      { icon: "ad", label: "No ads" },
+    ];
+    s.cards = cards.map((card, index) => {
+      $("nothing-cards").insertAdjacentHTML(
+        "beforeend",
+        `<div class="card" style="left:${270 + index * 480}px;top:390px;width:420px;height:340px">
+          <div class="struck a" style="left:140px;top:52px;width:140px;height:140px">
+            <svg class="ic" data-i="${card.icon}" style="width:140px;height:140px;stroke-width:1.15"></svg>
+            <svg class="slash" viewBox="0 0 24 24" style="stroke-width:1.5"><path class="draw" pathLength="1" d="M2.5 2.5l19 19"/></svg>
+          </div>
+          <div class="a" style="left:0;right:0;top:232px;text-align:center;font-size:46px;font-weight:500">${card.label}</div>
+        </div>`,
+      );
+      const node = $("nothing-cards").lastElementChild;
+      const start = at("nothing", "No", index) - 0.1;
+      sound(start, "pop", 1, 480 + index * 480);
+      sound(start + 0.28, "thud", 0.5, 480 + index * 480);
+      return { node, start, slash: node.querySelector(".draw") };
+    });
+    s.collects = at("nothing", "nothing") - 0.1;
+    sound(s.collects, "check", 0.8);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    for (const card of s.cards) {
+      pop(card.node, t, card.start);
+      draw(card.slash, ramp(t, card.start + 0.28, 0.25));
+    }
+    reveal($("nothing-line").parentNode, ramp(t, s.collects, 0.5, ease.inOut));
+  },
+});
+
+// 5. The one download
+
+scene("list", first("list"), last("list"), {
+  setup(s) {
+    s.downloads = at("list", "downloads") - 0.15;
+    s.short = at("list", "short") - 0.1;
+    s.signed = at("list", "signed");
+    s.project = at("list", "project", 0, "e") - 0.1;
+    s.nobody = at("list", "nobody") - 0.1;
+    s.change = at("list", "change");
+    sound(s.downloads, "whoosh", 0.8, 1300);
+    sound(s.signed + 0.12, "stamp", 1, 960);
+    sound(s.project, "whoosh", 0.7, 800);
+    sound(s.project + 0.6, "check", 1, 400);
+    sound(s.change, "thud", 1, 800);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("list-phone"), ramp(t, s.from + 0.1, 0.6), 40);
+    rise($("list-site"), ramp(t, s.from + 0.25, 0.6), 40);
+    draw($("list-wire"), ramp(t, s.from + 0.5, 0.6, ease.inOut));
+
+    // The list comes out of the site, waits in the middle to be signed, then goes into the phone.
+    const out = ramp(t, s.downloads, 0.8, ease.inOut);
+    const home = ramp(t, s.project, 0.7, ease.inOut);
+    const x = mix(mix(1500, 960, out), 420, home) - 75;
+    const arrived = ramp(t, s.project + 0.45, 0.3);
+    place($("list-doc"), { o: clamp(out * 5) * (1 - arrived), x, y: 540, s: mix(mix(0.5, 1, out), 0.55, home) });
+    const stamped = clamp((t - s.signed) / 0.3);
+    place($("list-seal"), { o: clamp(stamped * 4), s: mix(2.1, 1, ease.out(stamped)), r: -12 });
+    rise($("list-what"), ramp(t, s.short, 0.45) * (1 - ramp(t, s.project, 0.3)), 14);
+    rise($("list-signed"), ramp(t, s.signed + 0.15, 0.4) * (1 - ramp(t, s.project, 0.3)), 14);
+    pop($("list-ok"), t, s.project + 0.6);
+
+    // A list nobody signed gets no further than the phone's edge.
+    const comes = ramp(t, s.nobody, 0.7, ease.out);
+    const bounce = beat(t, s.change, 0.5);
+    place($("list-fake"), { o: clamp(comes * 4) * (1 - ramp(t, s.change + 0.9, 0.4)), x: mix(1250, 690, comes) + bounce * 40 - 75, y: 755, s: 0.62, r: bounce * 6 });
+    pop($("list-no"), t, s.change + 0.05);
+  },
+});
+
+// 6. Logging out
+
+scene("logout", first("logout"), last("logout"), {
+  setup(s) {
+    const tiles = ["key", "bubble", "photo", "person", "mic", "photo"];
+    s.tiles = tiles.map((icon, index) => {
+      $("logout-tiles").insertAdjacentHTML(
+        "beforeend",
+        `<div class="a center" style="left:${20 + (index % 2) * 122}px;top:${64 + Math.floor(index / 2) * 122}px;width:110px;height:110px;border:2px solid var(--hairline);border-radius:20px;background:var(--tray);color:var(--accent)"><svg class="ic" data-i="${icon}" style="width:50px;height:50px"></svg></div>`,
+      );
+      return $("logout-tiles").lastElementChild;
+    });
+    const rows = ["Your login", "Saved screens and conversations", "Pictures and stories", "Voice messages you recorded"];
+    s.rows = rows.map((text, index) => {
+      $("logout-rows").insertAdjacentHTML(
+        "beforeend",
+        `<div class="a" style="left:880px;top:${420 + index * 104}px;font-size:42px;font-weight:500;white-space:nowrap">${text}<svg class="a" viewBox="0 0 100 10" preserveAspectRatio="none" style="left:-10px;top:50%;width:calc(100% + 20px);height:10px;fill:none;stroke:var(--ink);overflow:visible"><path d="M0 5H100" vector-effect="non-scaling-stroke" stroke-width="4" stroke-linecap="round"/></svg></div>`,
+      );
+      const node = $("logout-rows").lastElementChild;
+      return { node, strike: node.querySelector("svg") };
+    });
+    s.out = at("logout", "out");
+    s.everything = at("logout", "everything") - 0.1;
+    s.step = (at("logout", "deleted", 0, "e") - s.everything) / 4.4;
+    sound(s.out, "off", 1, 620);
+    s.rows.forEach((row, index) => sound(s.everything + index * s.step, "erase", 0.9, 1100));
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("logout-phone"), ramp(t, s.from + 0.1, 0.6), 40);
+    s.rows.forEach((row, index) => {
+      const gone = ramp(t, s.everything + index * s.step, 0.35);
+      place(row.node, { o: ramp(t, s.from + 0.3 + index * 0.1, 0.4) * mix(1, 0.4, gone), x: (1 - ramp(t, s.from + 0.3 + index * 0.1, 0.4)) * 24 });
+      reveal(row.strike, gone);
+    });
+    // The login goes first, then what was saved, by kind, as the rows are crossed out.
+    const order = [0, 1, 2, 2, 3, 2];
+    s.tiles.forEach((tile, index) => {
+      const gone = ramp(t, s.everything + order[index] * s.step + (index % 2) * 0.08, 0.3, ease.in);
+      place(tile, { o: 1 - gone, s: 1 - 0.35 * gone });
+    });
+  },
+});
+
+// 7. Notifications are a choice
+
+function flip(switchNode, k, travel) {
+  switchNode.style.background = k > 0.5 ? "var(--accent)" : "var(--hairline)";
+  switchNode.firstElementChild.style.transform = `translateX(${travel * k}px)`;
+}
+
+scene("notifications", first("notifications"), last("notifications"), {
+  setup(s) {
+    s.optional = at("notifications", "optional");
+    s.pass = at("notifications", "pass") - 0.2;
+    s.relay = at("notifications", "Unreeled's") - 0.1;
+    s.cant = at("notifications", "can't") - 0.1;
+    sound(s.from + 0.15, "pop", 0.8);
+    sound(s.optional + 0.15, "on", 1, 1300);
+    sound(s.pass, "pop", 0.7, 500);
+    sound(s.pass + 0.2, "pop", 0.7, 1420);
+    sound(s.relay, "pop", 1);
+    sound(s.relay + 0.2, "whoosh", 0.7);
+    sound(s.cant + 0.2, "thud", 0.8);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("notifications-row"), ramp(t, s.from + 0.15, 0.55), 30);
+    flip($("notifications-switch"), ramp(t, s.optional + 0.15, 0.22, ease.inOut), 50);
+    rise($("notifications-instagram"), ramp(t, s.pass, 0.45), 24);
+    rise($("notifications-phone"), ramp(t, s.pass + 0.2, 0.45), 24);
+    pop($("notifications-relay"), t, s.relay);
+    draw($("notifications-in"), ramp(t, s.relay + 0.2, 0.4, ease.inOut));
+    draw($("notifications-on"), ramp(t, s.relay + 0.45, 0.4, ease.inOut));
+    $("notifications-in-head").style.opacity = ramp(t, s.relay + 0.5, 0.15);
+    $("notifications-on-head").style.opacity = ramp(t, s.relay + 0.75, 0.15);
+    pop($("notifications-blind"), t, s.cant);
+    draw($("notifications-slash"), ramp(t, s.cant + 0.2, 0.25));
+    rise($("notifications-cant"), ramp(t, s.cant + 0.15, 0.45), 16);
+  },
+});
+
+// 8 and 9. The keys, then the way a notification takes
+
+scene("chain", first("keys"), last("path"), {
+  setup(s) {
+    const stops = { instagram: 250, mozilla: 595, relay: 925, apple: 1255, phone: 1660 };
+    s.stops = stops;
+    // The arrows between the stops, drawn when the stops come in.
+    const gaps = [[392, 468], [722, 798], [1052, 1128], [1382, 1506]];
+    $("chain-wires").innerHTML = gaps
+      .map(([from, to]) => `<path class="draw" pathLength="1" d="M${from + 8} 640H${to - 8}" stroke="var(--ink)" stroke-width="4"/><path d="M${to - 22} 626l14 14-14 14" stroke="var(--ink)" stroke-width="4"/>`)
+      .join("");
+    s.wires = [...$("chain-wires").children];
+    // Under each stop on the way: it has no key.
+    s.nokeys = ["mozilla", "relay", "apple"].map((stop) => {
+      $("chain-nokeys").insertAdjacentHTML(
+        "beforeend",
+        `<div class="a" style="left:${stops[stop] - 90}px;top:752px;width:180px">
+          <div class="struck" style="width:70px;height:70px;margin:0 auto"><svg class="ic" data-i="key" style="width:70px;height:70px;color:var(--secondary)"></svg><svg class="slash" viewBox="0 0 24 24"><path class="draw" pathLength="1" d="M3 3l18 18"/></svg></div>
+          <div style="margin-top:8px;text-align:center;font-size:27px;font-weight:500;color:var(--secondary)">no key</div>
+        </div>`,
+      );
+      const node = $("chain-nokeys").lastElementChild;
+      return { node, slash: node.querySelector(".draw") };
+    });
+
+    // The keys
+    s.makes = at("keys", "makes") - 0.1;
+    s.private = at("keys", "private") - 0.15;
+    s.public = at("keys", "public") - 0.35;
+    s.address = at("keys", "push") - 0.3;
+    s.browser = at("keys", "just") - 0.1;
+    sound(s.makes, "sparkle", 1, 1360);
+    sound(s.private + 0.55, "lock", 1, 1360);
+    sound(s.public, "whoosh", 0.9, 960);
+    sound(s.public + 0.85, "pop", 0.8, 550);
+    sound(s.address, "whoosh", 0.7, 960);
+    sound(s.address + 0.85, "pop", 0.8, 550);
+
+    // The way
+    s.path = first("path");
+    s.message = at("path", "Instagram") - 0.1;
+    s.encrypts = at("path", "encrypts");
+    s.hops = [
+      { to: "mozilla", start: at("path", "Mozilla's") - 0.45 },
+      { to: "relay", start: at("path", "Unreeled's") - 0.4 },
+      { to: "apple", start: at("path", "Apple's") - 0.45 },
+      { to: "phone", start: at("path", "Only") - 0.05 },
+    ];
+    s.none = at("path", "None");
+    s.read = at("path", "read") - 0.1;
+    sound(s.path + 0.1, "whoosh", 0.6);
+    sound(s.message, "pop", 1, 250);
+    sound(s.encrypts + 0.1, "lock", 1, 250);
+    s.hops.forEach((hop, index) => sound(hop.start + 0.1, "hop", 0.9 + index * 0.05, stops[hop.to] - 150));
+    s.nokeys.forEach((nokey, index) => sound(s.hops[index].start + 0.75, "thud", 0.45, stops[s.hops[index].to]));
+    sound(s.read, "unlock", 1, 1660);
+    sound(s.read + 0.22, "chime", 1, 1500);
+  },
+  draw(t, s) {
+    const path = ramp(t, s.path - 0.2, 0.6, ease.inOut);
+    const apart = (1 - path) * 300;
+    rise($("chain-headline-keys"), ramp(t, s.from + 0.05) * (1 - ramp(t, s.path - 0.25, 0.25)));
+    rise($("chain-headline-path"), ramp(t, s.path + 0.05));
+    place($("chain-instagram"), { o: ramp(t, s.from + 0.1, 0.6), x: apart, y: (1 - ramp(t, s.from + 0.1, 0.6)) * 40 });
+    place($("chain-phone"), { o: ramp(t, s.from + 0.2, 0.6), x: -apart, y: (1 - ramp(t, s.from + 0.2, 0.6)) * 40 });
+
+    // Two keys are made in the phone. The private one goes into its Keychain and stays.
+    pop($("chain-private"), t, s.makes);
+    const labels = ramp(t, s.makes + 0.3, 0.3) * (1 - ramp(t, s.path - 0.3, 0.3));
+    const kept = ramp(t, s.private, 0.6, ease.inOut);
+    $("chain-private-label").style.opacity = labels * (1 - kept);
+    $("chain-public-label").style.opacity = labels;
+    if (t >= s.private) place($("chain-private"), { o: 1, x: mix(0, 34, kept), y: mix(0, 228, kept), s: mix(1, 0.72, kept) });
+    const locked = ramp(t, s.private + 0.55, 0.25);
+    $("chain-keychain").style.borderColor = locked > 0 ? "var(--ink)" : "var(--hairline)";
+    $("chain-keylock").style.opacity = locked;
+    place($("chain-callout"), { o: ramp(t, s.private + 0.2, 0.45) * (1 - ramp(t, s.path - 0.3, 0.3)), x: -apart, y: (1 - ramp(t, s.private + 0.2, 0.45)) * 16 });
+    // Once it has given its copy away, the public key steps back, and the lock screen shows.
+    place($("chain-public"), { o: clamp((t - s.makes - 0.16) * 8) * (1 - path), s: 0.72 + 0.28 * ease.back(clamp((t - s.makes - 0.16) / 0.42)) });
+    $("chain-clock").style.opacity = path;
+
+    // Instagram gets the public key and the push address: copies that fly over from the phone.
+    for (const [node, start, top] of [[$("chain-pill-key"), s.public, 752], [$("chain-pill-address"), s.address, 818]]) {
+      const k = ramp(t, start, 0.9, ease.inOut);
+      place(node, { o: clamp((t - start) * 6), x: mix(1520 - apart, 110 + apart, k), y: mix(560, top, k) - Math.sin(Math.PI * k) * 210, s: mix(0.7, 1, k) });
+    }
+    place($("chain-browser"), { o: ramp(t, s.browser, 0.45) * mix(1, 0, path), x: apart, y: (1 - ramp(t, s.browser, 0.45)) * 14 });
+
+    // The stops in between come in, one after another.
+    for (const [index, id] of ["chain-mozilla", "chain-relay", "chain-apple"].entries()) {
+      rise($(id), ramp(t, s.path + 0.1 + index * 0.14, 0.45), 30);
+    }
+    s.wires.forEach((wire, index) => {
+      const k = ramp(t, s.path + 0.3 + Math.floor(index / 2) * 0.14, 0.35, ease.inOut);
+      if (index % 2) wire.style.opacity = clamp(k * 3 - 2);
+      else draw(wire, k);
+    });
+
+    // A message, encrypted at Instagram, hops from stop to stop above them.
+    let x = s.stops.instagram;
+    let y = 470;
+    let from = "instagram";
+    for (const hop of s.hops) {
+      const k = ramp(t, hop.start, 0.65, ease.inOut);
+      const toPhone = hop.to === "phone";
+      x = mix(x, s.stops[hop.to], k);
+      y = mix(y, toPhone ? 577 : 470, k) - Math.sin(Math.PI * k) * (toPhone ? 30 : 54);
+      from = hop.to;
+    }
+    const sealed = ramp(t, s.encrypts, 0.36, ease.inOut);
+    const opened = ramp(t, s.read, 0.3);
+    place($("chain-parcel"), { o: clamp((t - s.message) * 6) * (1 - opened), x: x - 130, y: y - 40, s: 0.6 + 0.4 * ease.back(clamp((t - s.message) / 0.4)) - 0.08 * opened });
+    $("chain-bubble").style.opacity = sealed < 0.5 ? 1 : 0;
+    $("chain-cipher").style.opacity = sealed < 0.5 ? 0 : 1;
+    $("chain-bubble").style.transform = $("chain-cipher").style.transform = `scaleY(${Math.abs(1 - 2 * sealed)})`;
+
+    // Each stop it passes has no key; all three say so again together.
+    s.nokeys.forEach((nokey, index) => {
+      const start = s.hops[index].start + 0.6;
+      const k = clamp((t - start) / 0.42);
+      place(nokey.node, { o: clamp(k * 4), s: 0.72 + 0.28 * ease.back(k) + 0.14 * beat(t, s.none + index * 0.07, 0.5) });
+      draw(nokey.slash, ramp(t, start + 0.2, 0.25));
+    });
+    for (const [index, id] of ["chain-mozilla", "chain-relay", "chain-apple"].entries()) {
+      const glow = beat(t, s.hops[index].start + 0.35, 0.9);
+      $(id).style.boxShadow = `0 0 0 ${5 * glow}px var(--accent-light)`;
+    }
+
+    // In the phone, the private key opens it, and the notification shows.
+    pop($("chain-banner"), t, s.read + 0.12, 0.45);
+    const used = beat(t, s.read - 0.1, 0.9);
+    $("chain-keychain").style.boxShadow = `0 0 0 ${4 * used}px var(--accent)`;
+    const ring = clamp((t - s.read - 0.1) / 0.9);
+    place($("chain-ring"), { o: ring > 0 ? (1 - ring) * 0.9 : 0, s: 1 + 0.07 * ease.out(ring) });
+    rise($("chain-only"), ramp(t, s.read + 0.1, 0.45), 16);
+  },
+});
+
+// 10. What the relay knows
+
+scene("relay", first("relay"), last("relay"), {
+  setup(s) {
+    const rows = (id) => [...$(id).querySelectorAll("li")];
+    const starts = {
+      "relay-keeps": [at("relay", "random"), at("relay", "phone's"), at("relay", "push"), at("relay", "when")],
+      "relay-sees": [at("relay", "when", 1), at("relay", "size") - 0.25],
+      "relay-never": [at("relay", "Never"), at("relay", "Never") + 0.3, at("relay", "what"), at("relay", "whose")],
+    };
+    s.cards = [
+      { node: $("relay-keeps"), start: s.from + 0.15, x: 420 },
+      { node: $("relay-sees"), start: at("relay", "sees") - 0.35, x: 1000 },
+      { node: $("relay-never"), start: at("relay", "Never") - 0.35, x: 1540 },
+    ];
+    s.rows = Object.entries(starts).flatMap(([id, times], card) =>
+      rows(id).map((node, index) => ({ node, start: times[index] - 0.12, x: s.cards[card].x })),
+    );
+    s.cards.forEach((card) => sound(card.start, "pop", 0.9, card.x));
+    s.rows.forEach((row) => sound(row.start, "tick", 1.1, row.x));
+    sound(at("relay", "Never") - 0.1, "thud", 0.7, 1540);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    for (const card of s.cards) rise(card.node, ramp(t, card.start, 0.5), 34);
+    for (const row of s.rows) place(row.node, { o: ramp(t, row.start, 0.35), x: (1 - ramp(t, row.start, 0.35)) * 22 });
+  },
+});
+
+// 11. Turning them off
+
+scene("off", first("off"), last("off"), {
+  setup(s) {
+    s.rows = [...$("off-relay").querySelectorAll("li")];
+    s.switch = at("off", "off") - 0.05;
+    s.keys = at("off", "keys");
+    s.forgets = at("off", "forgets") - 0.1;
+    s.tell = s.keys + 0.35;
+    sound(s.switch, "off", 1, 540);
+    sound(s.keys + 0.1, "erase", 1, 540);
+    sound(s.tell, "whoosh", 0.7, 830);
+    s.rows.forEach((row, index) => sound(s.forgets + index * 0.14, "erase", 0.8, 1260));
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("off-phone"), ramp(t, s.from + 0.1, 0.6), 40);
+    rise($("off-relay"), ramp(t, s.from + 0.25, 0.6), 40);
+    draw($("off-wire"), ramp(t, s.from + 0.6, 0.5, ease.inOut));
+    flip($("off-switch"), 1 - ramp(t, s.switch, 0.22, ease.inOut), 32);
+    const deleted = ramp(t, s.keys + 0.1, 0.4, ease.in);
+    place($("off-key"), { o: 1 - deleted, s: 1 - 0.4 * deleted, r: -25 * deleted });
+    $("off-keychain").style.borderStyle = deleted >= 1 ? "dashed" : "solid";
+    // The phone tells the relay, which then has nothing left about it.
+    const told = ramp(t, s.tell, s.forgets - s.tell + 0.1, ease.inOut);
+    place($("off-forget"), { o: told > 0 && told < 1 ? 1 : 0, x: mix(450, 990, told), y: 582 });
+    s.rows.forEach((row, index) => {
+      const gone = ramp(t, s.forgets + index * 0.14, 0.3, ease.in);
+      place(row, { o: 1 - gone, x: gone * 30 });
+    });
+    $("off-empty").style.opacity = ramp(t, s.forgets + 0.75, 0.4);
+  },
+});
+
+// 12. In the open
+
+scene("open", first("open"), last("open"), {
+  setup(s) {
+    // Code as shapes: lines of different lengths and indents, a few in blue.
+    const shapes = [
+      [[0, 34, "a"], [38, 22, "i"]],
+      [[6, 18, "i"], [28, 40, "h"]],
+      [[6, 26, "h"], [36, 14, "a"], [54, 20, "h"]],
+      [[12, 44, "h"]],
+      [[12, 16, "a"], [32, 30, "h"]],
+      [[6, 10, "i"]],
+      [[0, 8, "i"]],
+    ];
+    const colours = { a: "var(--accent)", i: "var(--ink)", h: "var(--hairline)" };
+    s.lines = [];
+    for (const [card, id] of ["open-app", "open-relay"].entries()) {
+      const code = $(id).querySelector(".code");
+      shapes.forEach((line, row) => {
+        const order = card ? shapes.length - 1 - row : row;
+        const html = shapes[order].map(([left, width, colour]) => `<i class="a" style="left:${left}%;width:${width}%;height:14px;border-radius:7px;background:${colours[colour]}"></i>`).join("");
+        code.insertAdjacentHTML("beforeend", `<div class="a" style="left:40px;right:40px;top:${132 + row * 40}px;height:14px">${html}</div>`);
+        s.lines.push({ node: code.lastElementChild, start: s.from + 0.45 + row * 0.09 + card * 0.2 });
+      });
+    }
+    s.source = at("open", "open") - 0.1;
+    s.check = at("open", "anyone") - 0.1;
+    s.done = at("open", "this", 0, "e");
+    sound(s.from + 0.2, "pop", 0.8, 610);
+    sound(s.from + 0.4, "pop", 0.8, 1310);
+    for (let index = 0; index < 7; index++) sound(s.from + 0.5 + index * 0.11, "tick", 0.5, 960);
+    sound(s.source, "pop", 0.7);
+    sound(s.check, "whoosh", 0.9);
+    s.checked = [mix(s.check, s.done, 0.42), mix(s.check, s.done, 0.9)];
+    sound(s.checked[0], "pop", 0.7, 930);
+    sound(s.checked[1], "check", 0.9, 1630);
+  },
+  draw(t, s) {
+    rise(s.node.querySelector(".headline"), ramp(t, s.from + 0.05));
+    rise($("open-app"), ramp(t, s.from + 0.2, 0.55), 36);
+    rise($("open-relay"), ramp(t, s.from + 0.4, 0.55), 36);
+    for (const line of s.lines) {
+      const k = ramp(t, line.start, 0.3);
+      line.node.style.opacity = k;
+      line.node.style.clipPath = `inset(0 ${(1 - k) * 100}% 0 0)`;
+    }
+    rise($("open-where"), ramp(t, s.source, 0.45), 16);
+    // A magnifying glass goes over both, once.
+    const k = ramp(t, s.check, s.done - s.check, ease.inOut);
+    pop($("open-ok-app"), t, s.checked[0]);
+    pop($("open-ok-relay"), t, s.checked[1]);
+    place($("open-glass"), { o: clamp(k * 10) * (1 - ramp(t, s.done - 0.15, 0.3)), x: mix(380, 1400, k), y: 480 + Math.sin(k * Math.PI * 2) * 46 });
+  },
+});
+
+// 13. One caution, and where to read more
+
+scene("caution", first("caution"), last("caution"), {
+  holds: true,
+  setup(s) {
+    s.unofficial = at("caution", "Unreeled") - 0.15;
+    s.instagram = at("caution", "Instagram") - 0.15;
+    s.risk = at("caution", "uses") + 0.1;
+    s.ending = at("caution", "The") - 0.25;
+    sound(s.from + 0.15, "pop", 0.9);
+    sound(s.ending + 0.2, "swell", 0.9);
+    sound(s.ending + 0.75, "pop", 0.6);
+  },
+  draw(t, s) {
+    const ending = ramp(t, s.ending, 0.4, ease.inOut);
+    rise($("caution-headline"), ramp(t, s.from + 0.05) * (1 - ending));
+    place($("caution-notice"), { o: ramp(t, s.from + 0.15, 0.5) * (1 - ending), y: (1 - ramp(t, s.from + 0.15, 0.5)) * 30 });
+    rise($("caution-1"), ramp(t, s.unofficial, 0.45), 14);
+    rise($("caution-2"), ramp(t, s.instagram, 0.45), 14);
+    rise($("caution-3"), ramp(t, s.risk, 0.45), 14);
+    $("caution-end").style.opacity = t >= s.ending ? 1 : 0;
+    pop($("end-icon"), t, s.ending + 0.3, 0.7);
+    rise($("end-wordmark"), ramp(t, s.ending + 0.6, 0.6));
+    rise($("end-site"), ramp(t, s.ending + 0.95, 0.55));
+    rise($("end-more"), ramp(t, s.ending + 1.3, 0.55));
+  },
+});
+
+// MARK: Drawing a moment
+
+const chapters = [
+  { node: $("chapter-app"), from: first("login"), to: first("notifications") },
+  { node: $("chapter-notifications"), from: first("notifications"), to: first("open") },
+  { node: $("chapter-open"), from: first("open"), to: Infinity },
+];
+const barLeaves = scenes.at(-1).state.ending;
+
+function seek(t) {
+  for (const { node, from, to, state, drawScene, holds } of scenes) {
+    const coming = ramp(t, from, 0.4, ease.inOut);
+    const going = holds ? 1 : 1 - ramp(t, to - 0.3, 0.3, ease.inOut);
+    const shown = t >= from && (holds || t < to);
+    node.style.visibility = shown ? "visible" : "hidden";
+    if (!shown) continue;
+    node.style.opacity = coming * going;
+    drawScene(t, state);
+  }
+  $("bar").style.opacity = ramp(t, first("login"), 0.4) * (1 - ramp(t, barLeaves, 0.3));
+  for (const chapter of chapters) {
+    chapter.node.style.opacity = ramp(t, chapter.from + 0.1, 0.3) * (1 - ramp(t, chapter.to - 0.2, 0.3));
+  }
+}
+
+// MARK: Start
+
+fillRows();
+fillIcons();
+window.SOUNDS = SOUNDS.sort((one, other) => one.t - other.t);
+window.seek = seek;
+
+const loaded = [...document.images].map((image) => image.decode().catch(() => {}));
+Promise.all([document.fonts.ready, ...loaded]).then(() => {
+  seek(0);
+  window.ready = true;
+  if (!window.RENDERING) preview();
+});
+
+/** In a browser: the stage fitted to the window, a slider, and the sound if it has been made. */
+function preview() {
+  const stage = $("stage");
+  const fit = () => (stage.style.transform = `scale(${Math.min(innerWidth / 1920, (innerHeight - 44) / 1080)})`);
+  fit();
+  addEventListener("resize", fit);
+  document.body.insertAdjacentHTML(
+    "beforeend",
+    `<div id="controls"><button id="play">Play</button><input id="slider" type="range" min="0" max="${TIMELINE.duration}" step="0.01" value="0"><span id="clock">0.0</span><audio id="audio" src=".build/mix.wav" preload="auto"></audio></div>`,
+  );
+  const audio = $("audio");
+  const show = (t) => {
+    seek(t);
+    $("slider").value = t;
+    $("clock").textContent = `${t.toFixed(1)} / ${TIMELINE.duration.toFixed(1)}`;
+  };
+  $("slider").addEventListener("input", (event) => {
+    audio.currentTime = +event.target.value;
+    show(+event.target.value);
+  });
+  $("play").addEventListener("click", () => (audio.paused ? audio.play() : audio.pause()));
+  const tick = () => {
+    if (!audio.paused) show(audio.currentTime);
+    requestAnimationFrame(tick);
+  };
+  tick();
+  show(0);
+}
+</script>
+</body>
+</html>

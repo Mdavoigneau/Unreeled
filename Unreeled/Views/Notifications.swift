@@ -39,6 +39,11 @@ struct NotificationsOffer: View {
                     )
                 }
                 .padding(.top, 36)
+                Link("How this works, in a short video", destination: Links.notifications)
+                    .font(Theme.font(14))
+                    .foregroundStyle(Theme.accent)
+                    .frame(minHeight: 44)
+                    .padding(.top, 14)
                 if let failure = notifications.failure {
                     Text(failure)
                         .font(Theme.font(14))

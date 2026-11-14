@@ -1,0 +1,67 @@
+{
+  "voice": "am_michael",
+  "speed": 1.0,
+  "spoken": {
+    "unreeled.app": "unreeled dot app"
+  },
+  "scenes": [
+    {
+      "id": "title",
+      "lead": 1.1,
+      "tail": 0.55,
+      "text": "Unreeled is an open-source app for Instagram. Here's how it keeps your account private."
+    },
+    {
+      "id": "login",
+      "text": "You log in on Instagram's own page. Unreeled never reads or stores your password."
+    },
+    {
+      "id": "direct",
+      "text": "After that, your phone talks straight to Instagram. Nothing you see or send passes through a server of ours."
+    },
+    {
+      "id": "nothing",
+      "text": "No analytics, no tracking, no ads. Unreeled collects nothing about you."
+    },
+    {
+      "id": "list",
+      "text": "It downloads one thing: a short list that keeps it working, signed by the project so nobody else can change it."
+    },
+    {
+      "id": "logout",
+      "tail": 0.7,
+      "text": "Log out, and everything it saved on your phone is deleted."
+    },
+    {
+      "id": "notifications",
+      "lead": 0.7,
+      "text": "Notifications are optional. They do pass through a server, Unreeled's relay, but it can't read them. Here's why."
+    },
+    {
+      "id": "keys",
+      "text": "Your phone makes a pair of keys, and the private key never leaves it. Instagram gets the public key and a push address, just as a browser would."
+    },
+    {
+      "id": "path",
+      "tail": 0.9,
+      "text": "Instagram encrypts each notification for your phone. It travels through Mozilla's push service, Unreeled's relay, and Apple's. None of them has the key. Only your phone can read it."
+    },
+    {
+      "id": "relay",
+      "text": "The relay keeps a random ID, your phone's address at Apple, the push address, and when your phone was last seen. It sees when a notification passes, and its size. Never what it says, or whose account it is."
+    },
+    {
+      "id": "off",
+      "text": "Turn notifications off, or log out, and the keys are deleted and the relay forgets your phone."
+    },
+    {
+      "id": "open",
+      "text": "The app and the relay are open source, so anyone can check all of this."
+    },
+    {
+      "id": "caution",
+      "tail": 3.2,
+      "text": "One caution: Unreeled is unofficial, and Instagram could restrict an account that uses it. The details are at unreeled.app."
+    }
+  ]
+}
