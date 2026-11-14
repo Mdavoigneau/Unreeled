@@ -1,8 +1,13 @@
 # Response headers for the files Cloudflare serves (https://developers.cloudflare.com/workers/static-assets/headers/).
 
-# Installed apps download this list (Unreeled/API/QueryUpdates.swift): a short cache, so a new list
-# reaches everyone within minutes, and kept out of search results.
+# Installed apps download this list and its signature (Unreeled/API/QueryUpdates.swift): a short
+# cache, so a new list reaches everyone within minutes, and kept out of search results.
 /queries.json
+  Cache-Control: public, max-age=300
+  X-Robots-Tag: noindex
+
+/queries.json.sig
+  Content-Type: application/json
   Cache-Control: public, max-age=300
   X-Robots-Tag: noindex
 

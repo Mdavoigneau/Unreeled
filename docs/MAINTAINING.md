@@ -6,22 +6,31 @@ Instagram gives a query a new ID whenever it changes it, and the old ID stops wo
 
 1. **Find the new ID** in a Debug build, as below.
 2. **Update its entry** in [Queries.json](../Unreeled/API/Queries.json): the `doc_id`, and the `providers` if the website now sends different flags. If the variables changed too, Endpoints.swift needs a new version of the app.
-3. **Check the file is valid JSON** (`python3 -m json.tool Unreeled/API/Queries.json > /dev/null`) and push it to `main`.
+3. **Sign the list:** `node tools/sign-queries.mjs`. It checks every entry as the app would, then writes [Queries.json.sig](../Unreeled/API/Queries.json.sig). Push both files to `main`.
 
-Installed apps then pick it up without a new version. They download `https://unreeled.app/queries.json`, or this file on GitHub if the site doesn't answer, at launch at most every 6 hours and right after a query fails at most every 10 minutes. See [QueryUpdates.swift](../Unreeled/API/QueryUpdates.swift). The site rebuilds from `main` on every push that changes the file, within a few minutes ([website/README.md](../website/README.md)).
+Installed apps then pick it up without a new version. They download `https://unreeled.app/queries.json` and its signature, or the two files on GitHub if the site doesn't answer, at launch at most every 6 hours and right after a query fails at most every 10 minutes. They take a list only when it's signed with one of the keys in [QueryUpdates.swift](../Unreeled/API/QueryUpdates.swift), and not signed before the list they have. The site rebuilds from `main` on every push that changes the list, within a few minutes, and refuses a list whose signature doesn't match ([website/README.md](../website/README.md)).
 
 Rules for the list, since every installed version reads it:
 
 - Never remove or rename an entry: older versions still use it. Add new ones freely; versions that don't know a name ignore it.
 - Change only what Instagram changed. Apps take an entry only when its `doc_id` is all digits, its `path` is `/api/graphql` or `/graphql/query`, and its flags start with `__relay_internal__pv__`.
+- Sign only a list you'd publish: every installed app takes a signed list, wherever it comes from. A `doc_id` from someone else's pull request needs checking before you sign it, by recording the query yourself as below.
 
-To try a list before pushing it, serve it locally and point a Debug build at it:
+To try a list before signing it, serve it locally and point a Debug build at it:
 
 ```bash
 python3 -m http.server 8765 --bind 127.0.0.1 --directory Unreeled/API
 ```
 
-Then launch with `-queriesURL http://127.0.0.1:8765/Queries.json` (Product › Scheme › Edit Scheme › Run › Arguments). The log shows what it took.
+Then launch with `-queriesURL http://127.0.0.1:8765/Queries.json -queriesUnsigned YES` (Product › Scheme › Edit Scheme › Run › Arguments). The Debug build looks there at every launch, and the log shows what it took. Without `-queriesUnsigned`, it checks the signature next to the list, as installed apps do.
+
+### The signing key
+
+The private key is `~/.config/unreeled/query-signing/private-key.pem` on the maintainer's computer, or the file named by `UNREELED_QUERY_KEY`. Whoever has it chooses which of Instagram's queries every installed app sends, so it goes nowhere else: not in the repository, a build, or a CI service, where anyone who can push could have it sign. Keep a copy in a password manager.
+
+- **Lost:** installed apps keep the list they have and take no new one until they update. Make a new key with `node tools/sign-queries.mjs new-key`, add the public key it prints to `publicKeys` in QueryUpdates.swift, and release a new version.
+- **Leaked:** the same, and take the old key out of `publicKeys` in that version. Versions already installed trust the old key until they update.
+- **Changing keys on purpose:** add the new key to `publicKeys` in a release, and keep signing with the old one until most installs have that release.
 
 ## Finding a query's new ID
 
@@ -59,7 +68,7 @@ Launch arguments that help when testing:
 - `-noStorySeen YES` opens stories without telling Instagram you saw them, to test the story viewer without showing up in anyone's viewers.
 - `-standInConversations YES` opens a blank stand-in instead of a conversation, to test the inbox without opening anyone's messages or marking them read.
 - `-testVoiceClip YES` records a test tone instead of the microphone.
-- `-queriesURL <url>` takes query updates from that address.
+- `-queriesURL <url>` takes query updates from that address, looked at every launch; with `-queriesUnsigned YES`, without checking the signature.
 - `-relay <address>` uses that notification relay, such as `http://localhost:8787`, and `-pushDryRun YES` turns notifications on without registering anything with Instagram. Together they try notifications in the simulator: see Testing in [NOTIFICATIONS.md](NOTIFICATIONS.md).
 
 ## Testing on a real account

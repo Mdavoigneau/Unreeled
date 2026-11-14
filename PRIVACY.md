@@ -34,7 +34,7 @@ Nothing, unless you turn notifications on; then only what the relay keeps, liste
 
 ## The query list
 
-Instagram changes the IDs of the requests its website makes from time to time. To keep working, Unreeled downloads the project's current list of those IDs from unreeled.app, or from GitHub if that fails: at launch at most every 6 hours, and when a request to Instagram fails. The download carries nothing about you or your account. Like any web request, it reaches the server with your IP address and the app's version. Those servers are run by Cloudflare (unreeled.app) and GitHub; we don't log these requests or use them to identify anyone.
+Instagram changes the IDs of the requests its website makes from time to time. To keep working, Unreeled downloads the project's current list of those IDs, with its signature, from unreeled.app, or from GitHub if that fails: at launch at most every 6 hours, and when a request to Instagram fails. The app uses a list only if the project signed it. The downloads carry nothing about you or your account. Like any web request, they reach the server with your IP address and the app's version. Those servers are run by Cloudflare (unreeled.app) and GitHub; we don't log these requests or use them to identify anyone.
 
 ## Children
 

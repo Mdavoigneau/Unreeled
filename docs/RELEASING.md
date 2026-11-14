@@ -6,7 +6,7 @@ What notarization requires of Unreeled, and why it has it:
 
 - **Accurate, and no impersonation** (guidelines 2.3.1, 4.1(b)): its own name and icon, and "not made or endorsed by Instagram or Meta" in the app and the listing.
 - **A privacy policy** (5.1.1), linked in the app (About) and in App Store Connect: `https://unreeled.app/privacy`, from [PRIVACY.md](../PRIVACY.md).
-- **No downloaded code** (2.5.2): the query list the app downloads is data (IDs and flags), checked before use.
+- **No downloaded code** (2.5.2): the query list the app downloads is data (IDs and flags), signed by the project and checked before use.
 
 ## Once
 
@@ -21,7 +21,7 @@ What notarization requires of Unreeled, and why it has it:
 
 ## Each version
 
-1. **Version numbers.** Raise `MARKETING_VERSION` (and `CURRENT_PROJECT_VERSION`) in the target's build settings. A new version sets aside the query list older versions downloaded, and fetches the current one at launch.
+1. **Version numbers.** Raise `MARKETING_VERSION` (and `CURRENT_PROJECT_VERSION`) in the target's build settings. A new version sets aside the query list older versions downloaded, and fetches the current one at launch. Check the list it ships with is signed (`node tools/sign-queries.mjs check`): the app then knows not to take an older one.
 2. **Archive and upload.** In Xcode, pick the **Unreeled for iPhone** scheme and "Any iOS Device", then Product › Archive. In the Organizer: Distribute App › App Store Connect › Upload.
 3. **Notarization.** In App Store Connect, on the version's page: App Review Information › Review Type › Edit › **Notarization**, then Add for Review and Submit to App Review.
 4. **The package.** Once it's approved and AltStore has processed it, download the Alternative Distribution Package with AltStore's REST API. Upload it to unreeled.app exactly as it is: same folders, same files, `manifest.json` untouched (its hashes are checked).

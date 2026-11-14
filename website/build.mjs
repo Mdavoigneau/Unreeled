@@ -3,17 +3,19 @@
 //   - the pages in src/, inside src/layout.html, with src/style.css inlined;
 //   - /privacy, from the repository's PRIVACY.md (and /privacy.md, the Markdown itself);
 //   - /queries.json, the repository's Unreeled/API/Queries.json byte for byte, which installed
-//     apps download to stay current (see Unreeled/API/QueryUpdates.swift);
+//     apps download to stay current (see Unreeled/API/QueryUpdates.swift), and /queries.json.sig,
+//     its signature, which they check;
 //   - sitemap.xml, and everything in public/ as it is.
 //
 //     npm run build
 //
-// Cloudflare runs this on every push to main that touches the site, PRIVACY.md or Queries.json
-// (see README.md), so the live copies never lag behind the repository.
+// Cloudflare runs this on every push to main that touches the site, PRIVACY.md, Queries.json or
+// its signature (see README.md), so the live copies never lag behind the repository.
 
 import { createHash } from "node:crypto";
 import { cp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { marked } from "marked";
+import { checkSignature } from "../tools/query-signature.mjs";
 
 const site = "https://unreeled.app";
 const repository = "https://github.com/Mdavoigneau/Unreeled";
@@ -27,16 +29,22 @@ const description =
 
 // MARK: Files from the repository
 
-/** The query list exactly as it is in the repository. A file that isn't a JSON object of queries
- * fails the build, so the site keeps serving the last good one. (Apps check each entry
- * themselves and skip any that look wrong.) */
+/** The query list exactly as it is in the repository, with its signature. A file that isn't a JSON
+ * object of queries, or a signature that doesn't match it, fails the build, so the site keeps
+ * serving the last good pair. (Apps check the signature too, and each entry, and skip any that
+ * look wrong.) */
 async function queries() {
   const bytes = await readFile(new URL("Unreeled/API/Queries.json", root));
   const list = JSON.parse(bytes.toString("utf8"));
   const count = list && typeof list === "object" && !Array.isArray(list) ? Object.keys(list).length : 0;
   if (!count) throw new Error("Unreeled/API/Queries.json isn't a list of queries");
+  const signature = await readFile(new URL("Unreeled/API/Queries.json.sig", root)).catch(() => {
+    throw new Error("Unreeled/API/Queries.json.sig is missing: sign the list (node tools/sign-queries.mjs)");
+  });
+  const signed = await checkSignature(bytes, signature);
   await writeFile(new URL("queries.json", dist), bytes);
-  return count;
+  await writeFile(new URL("queries.json.sig", dist), signature);
+  return { count, signed };
 }
 
 /** The privacy policy, rendered, with the date it took effect for the sitemap. */
@@ -310,7 +318,7 @@ ${urls.join("\n")}
 await rm(dist, { recursive: true, force: true });
 await cp(new URL("public/", website), dist, { recursive: true });
 
-const queryCount = await queries();
+const queryList = await queries();
 const policy = await privacy();
 const layout = await readFile(new URL("src/layout.html", website), "utf8");
 const style = await readFile(new URL("src/style.css", website), "utf8");
@@ -375,4 +383,6 @@ const pages = [
 for (const page of pages) await render(page, layout, style);
 await writeFile(new URL("sitemap.xml", dist), sitemap(pages));
 
-console.log(`Built dist/: ${pages.length} pages, queries.json with ${queryCount} queries.`);
+console.log(
+  `Built dist/: ${pages.length} pages, queries.json with ${queryList.count} queries, signed ${queryList.signed}.`,
+);
