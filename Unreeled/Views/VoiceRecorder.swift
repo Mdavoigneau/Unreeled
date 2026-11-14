@@ -85,6 +85,15 @@ final class VoiceRecorder {
         reset()
     }
 
+    /// Recordings stay after they're sent, so they play in the conversation until Instagram's copy
+    /// replaces them. When the login ends, they go with the rest.
+    static func removeAll() {
+        let files = (try? FileManager.default.contentsOfDirectory(at: URL.temporaryDirectory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasPrefix("voice-") && file.pathExtension == "caf" {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     private func begin(url: URL, recorder: AVAudioRecorder?) {
         self.url = url
         self.recorder = recorder

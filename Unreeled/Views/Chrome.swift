@@ -258,9 +258,12 @@ struct StoryAvatar: View {
 struct WebPageScreen: View {
     let path: String
     let title: String
+    @Environment(Session.self) private var session
 
     var body: some View {
         WebScreen(path: path)
             .classicBar(showsBack: true, title: title)
+            // The website can log you out or switch accounts: leaving it, the app follows.
+            .onDisappear { Task { await session.refresh() } }
     }
 }

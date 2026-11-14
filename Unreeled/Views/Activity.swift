@@ -78,19 +78,23 @@ struct ActivityLog: Codable {
         ResponseCache.shared.data(for: key).flatMap { try? InstagramAPI.decodeSaved(ActivityLog.self, from: $0) }
     }
 
-    func save() {
+    /// Kept for `account`, the one logged in when Instagram's latest were asked for.
+    func save(account: String?) {
         guard let data = try? JSONEncoder().encode(self) else { return }
-        ResponseCache.shared.store(data, for: Self.key)
+        ResponseCache.shared.store(data, for: Self.key, account: account)
     }
 
     /// Instagram's latest, then what was kept from before the oldest of them: anything newer
     /// that Instagram no longer sends was taken back. Without its own prompts, or ones with no text.
+    /// A kept one without a date can't be placed before them, so it stays only while Instagram
+    /// sends it. When Instagram sends none at all, what's kept stays: an answer that didn't read
+    /// would look the same.
     func adding(_ feed: ActivityFeed) -> ActivityLog {
         let fresh = feed.items
             .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .filter { !Self.instagramPrompts.contains($0.storyType ?? -1) }
         let oldest = fresh.compactMap(\.date).min() ?? .distantFuture
-        let earlier = items.filter { ($0.date ?? .distantPast) < oldest }
+        let earlier = items.filter { $0.date.map { $0 < oldest } ?? false }
         let all = (fresh + earlier).sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
         return ActivityLog(items: Array(all.prefix(Self.limit)), requests: feed.requests)
     }
@@ -121,9 +125,10 @@ final class ActivityModel {
         if !force, let loadedAt, Date.now.timeIntervalSince(loadedAt) < 30 { return }
         isLoading = items.isEmpty
         defer { isLoading = false }
+        let account = SavedCopies.account
         do {
             let updated = (log ?? ActivityLog()).adding(try await api.activity())
-            updated.save()
+            updated.save(account: account)
             log = updated
             show(updated)
             loadedAt = .now

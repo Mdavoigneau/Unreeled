@@ -6,14 +6,26 @@
 //
 // It NEVER decrypts: it hands the raw ciphertext + headers to onNotification, which forwards them
 // to the phone. Only the phone holds the decryption key. See ../../docs/NOTIFICATIONS.md.
+//
+// A connection can die without closing, so nothing here waits on Mozilla for ever: a connection
+// that hasn't said hello in time is dropped, so is one that doesn't answer a ping, and a
+// registration gives up before the phone waiting for it does.
 import { WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
 
 const DEFAULT_URL = "wss://push.services.mozilla.com";
-const PING_MS = 60_000;          // keepalive; Mozilla drops idle sockets
-const RECONNECT_MS = 2_000;      // first wait before reconnecting; doubles while it keeps failing
+const HELLO_TIMEOUT_MS = 30_000;  // from starting a connection to Mozilla's hello
+const CHECK_MS = 60_000;          // how often the connection is checked
+// How long the connection may be quiet before Mozilla is asked whether it's still there: a `{}`,
+// which it answers with a `{}`. A connection that carries nothing for about two minutes is closed
+// somewhere along the way, and Mozilla drops a client that pings more than once in 45 seconds.
+const QUIET_MS = 50_000;
+const RECONNECT_MS = 2_000;       // first wait before reconnecting; doubles while it keeps failing
 const RECONNECT_MAX_MS = 60_000;
-const REGISTER_TIMEOUT_MS = 15_000;
+const STABLE_MS = 60_000;         // a connection that lasted this long was a good one: the waits start over
+// How long registering a channel may take, waiting for a connection included: a phone gives up on
+// pairing after 15 seconds, and should hear why before then.
+const REGISTER_TIMEOUT_MS = 10_000;
 
 export class MozillaClient {
   /**
@@ -26,8 +38,16 @@ export class MozillaClient {
    * @param {Function} o.saveIdentity    (uaid) => void — called when Mozilla assigns/changes the uaid.
    * @param {Function} [o.onReset]       (lostChannelIDs) => void | Promise — Mozilla answered with a new
    *                                     uaid, so the channels of the old one (and their endpoints) are gone.
+   * @param {number}  [o.helloTimeoutMs] The tests' clock: the waits above, in ms.
+   * @param {number}  [o.checkMs]
+   * @param {number}  [o.quietMs]
+   * @param {number}  [o.reconnectMs]
+   * @param {number}  [o.registerTimeoutMs]
    */
-  constructor({ vapidKey, url = DEFAULT_URL, logger = console, onNotification, getIdentity, saveIdentity, onReset }) {
+  constructor({
+    vapidKey, url = DEFAULT_URL, logger = console, onNotification, getIdentity, saveIdentity, onReset,
+    helloTimeoutMs = HELLO_TIMEOUT_MS, checkMs = CHECK_MS, quietMs = QUIET_MS, reconnectMs = RECONNECT_MS, registerTimeoutMs = REGISTER_TIMEOUT_MS,
+  }) {
     this.vapidKey = vapidKey;
     this.url = url;
     this.log = logger;
@@ -35,6 +55,11 @@ export class MozillaClient {
     this.getIdentity = getIdentity;
     this.saveIdentity = saveIdentity;
     this.onReset = onReset;
+    this.helloTimeoutMs = helloTimeoutMs;
+    this.checkMs = checkMs;
+    this.quietMs = quietMs;
+    this.firstReconnectMs = reconnectMs;
+    this.registerTimeoutMs = registerTimeoutMs;
 
     this.ws = null;
     this.connected = false;            // true between Mozilla's hello and the socket closing
@@ -43,9 +68,12 @@ export class MozillaClient {
     this.uaid = null;
     this.channelIDs = new Set();
     this.pendingRegisters = new Map(); // channelID -> { resolve, reject, timer }
-    this.pingTimer = null;
+    this.checkTimer = null;
     this.reconnectTimer = null;
-    this.reconnectMs = RECONNECT_MS;
+    this.reconnectMs = reconnectMs;
+    this.helloAt = 0;
+    this.lastHeard = 0;
+    this.pingSentAt = 0;
     this.stopped = false;
   }
 
@@ -54,6 +82,7 @@ export class MozillaClient {
     const id = (await this.getIdentity?.()) || {};
     this.uaid = id.uaid || null;
     for (const c of id.channelIDs || []) this.channelIDs.add(c);
+    this.checkTimer = setInterval(() => this._check(), this.checkMs);
     this._connect();
     await this.ready;
   }
@@ -62,25 +91,63 @@ export class MozillaClient {
     // One promise per wait for a hello: a connection that fails before it keeps the same one, so
     // whoever is waiting (start, registerChannel) is still answered by the attempt that succeeds.
     if (!this._resolveReady) this.ready = new Promise((res) => (this._resolveReady = res));
-    this.ws = new WebSocket(this.url);
-    this.ws.on("open", () => {
+    this.reconnectTimer = null;
+    const ws = new WebSocket(this.url, { handshakeTimeout: this.helloTimeoutMs });
+    this.ws = ws;
+    // A connection Mozilla hasn't said hello on in time is given up on, whatever stage it stalled
+    // at: terminate() ends in "close", which reconnects after the usual wait.
+    const helloTimer = setTimeout(() => {
+      if (this.ws !== ws || this.connected) return;
+      this.log.warn?.("[mozilla] no hello in time; reconnecting");
+      ws.terminate();
+    }, this.helloTimeoutMs);
+    ws.on("open", () => {
       this.log.info?.(`[mozilla] connected; hello ${this.uaid ? "(resume)" : "(new)"} with ${this.channelIDs.size} channel(s)`);
       this._send({ messageType: "hello", use_webpush: true, uaid: this.uaid, channelIDs: [...this.channelIDs] });
-      clearInterval(this.pingTimer);
-      this.pingTimer = setInterval(() => { try { if (this.ws?.readyState === 1) this.ws.ping(); } catch {} }, PING_MS);
     });
-    this.ws.on("message", (raw) => this._onMessage(raw));
-    this.ws.on("error", (e) => this.log.warn?.("[mozilla] ws error:", e?.message || e));
-    this.ws.on("close", (code) => {
+    ws.on("message", (raw) => {
+      // Anything Mozilla says shows the connection is alive.
+      this.lastHeard = Date.now();
+      this.pingSentAt = 0;
+      // Whatever goes wrong with one message is that message's problem, not the process's.
+      this._onMessage(raw).catch((e) => this.log.warn?.("[mozilla] handling a message failed:", e?.message || e));
+    });
+    ws.on("error", (e) => this.log.warn?.("[mozilla] ws error:", e?.message || e));
+    ws.on("close", (code) => {
+      clearTimeout(helloTimer);
+      // A connection that held for a minute was a good one, and the waits start over. Not at
+      // every hello: a service that answered and then hung up would be tried every two seconds.
+      if (this.connected && Date.now() - this.helloAt >= STABLE_MS) this.reconnectMs = this.firstReconnectMs;
       this.connected = false;
-      clearInterval(this.pingTimer);
+      this.pingSentAt = 0;
       // Reject any in-flight registrations so callers don't hang across a reconnect.
       for (const [ch, p] of this.pendingRegisters) { clearTimeout(p.timer); p.reject(new Error("connection closed")); this.pendingRegisters.delete(ch); }
       if (this.stopped) return;
-      this.log.info?.(`[mozilla] closed (code ${code}); reconnecting in ${this.reconnectMs}ms`);
-      this.reconnectTimer = setTimeout(() => this._connect(), this.reconnectMs);
+      // Up to a quarter longer, by chance, so that attempts don't keep in step with anything.
+      const wait = Math.round(this.reconnectMs * (1 + Math.random() / 4));
+      this.log.info?.(`[mozilla] closed (code ${code}); reconnecting in ${wait}ms`);
+      this.reconnectTimer = setTimeout(() => this._connect(), wait);
       this.reconnectMs = Math.min(this.reconnectMs * 2, RECONNECT_MAX_MS);
     });
+  }
+
+  /**
+   * Run every `checkMs`. Sends a quiet connection a `{}`, and drops one that hasn't answered the
+   * last: it's dead without having said so. The same check as the Worker relay's, which is known
+   * to work against Mozilla's service.
+   */
+  _check() {
+    const ws = this.ws;
+    if (!ws || !this.connected) return;
+    if (this.pingSentAt && this.lastHeard < this.pingSentAt) {
+      this.log.warn?.("[mozilla] no answer to a ping; reconnecting");
+      ws.terminate();
+      return;
+    }
+    if (Date.now() - this.lastHeard >= this.quietMs) {
+      this.pingSentAt = Date.now();
+      this._send({});
+    }
   }
 
   _send(obj) { if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(obj)); }
@@ -90,7 +157,8 @@ export class MozillaClient {
     try { m = JSON.parse(raw.toString()); } catch { return; }
     switch (m.messageType) {
       case "hello": {
-        if (m.status !== 200 || !m.uaid) {
+        // Closing it reconnects after the usual wait, which grows while this keeps happening.
+        if (m.status !== 200 || typeof m.uaid !== "string" || !m.uaid) {
           this.log.warn?.(`[mozilla] hello refused (status ${m.status})`);
           try { this.ws.close(); } catch {}
           break;
@@ -104,7 +172,7 @@ export class MozillaClient {
           await this.saveIdentity?.(this.uaid);
         }
         this.connected = true;
-        this.reconnectMs = RECONNECT_MS;
+        this.helloAt = Date.now();
         this.log.info?.(`[mozilla] hello ok (uaid ${this.uaid.slice(0, 8)}…); ${this.channelIDs.size} channel(s) resumed`);
         this._resolveReady?.();
         this._resolveReady = null;
@@ -136,10 +204,21 @@ export class MozillaClient {
 
   /** Registers a new channel (one device). Resolves to { channelID, endpoint }. */
   async registerChannel() {
-    await this.ready;
+    const deadline = Date.now() + this.registerTimeoutMs;
+    if (!this.connected) {
+      let timer;
+      try {
+        await Promise.race([
+          this.ready,
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("not connected to Mozilla")), this.registerTimeoutMs); }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
     const channelID = randomUUID();
     const endpoint = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pendingRegisters.delete(channelID); reject(new Error("register timeout")); }, REGISTER_TIMEOUT_MS);
+      const timer = setTimeout(() => { this.pendingRegisters.delete(channelID); reject(new Error("register timeout")); }, Math.max(0, deadline - Date.now()));
       this.pendingRegisters.set(channelID, { resolve, reject, timer });
       this._send({ messageType: "register", channelID, key: this.vapidKey });
     });
@@ -154,7 +233,7 @@ export class MozillaClient {
 
   close() {
     this.stopped = true;
-    clearInterval(this.pingTimer);
+    clearInterval(this.checkTimer);
     clearTimeout(this.reconnectTimer);
     try { this.ws?.close(); } catch {}
   }

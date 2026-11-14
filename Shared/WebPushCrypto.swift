@@ -37,7 +37,9 @@ enum WebPushCrypto {
     static func decrypt(_ envelope: Envelope, privateKey: P256.KeyAgreement.PrivateKey, auth: Data) throws -> Data {
         switch envelope.encoding.lowercased() {
         case "aesgcm":
-            guard let salt = envelope.encryption.flatMap({ value($0, name: "salt") }),
+            // The salt is 16 bytes, as in `aes128gcm`. The record size (`rs`) isn't read: a push is
+            // one record, and a body of several wouldn't pass the tag check below.
+            guard let salt = envelope.encryption.flatMap({ value($0, name: "salt") }), salt.count == 16,
                   let senderKey = envelope.cryptoKey.flatMap({ value($0, name: "dh") })
             else { throw Failure.missingField }
             return try decryptLegacy(envelope.body, salt: salt, senderKey: senderKey, privateKey: privateKey, auth: auth)

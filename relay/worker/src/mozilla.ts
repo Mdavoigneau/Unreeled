@@ -27,9 +27,12 @@ export interface Callbacks {
 const OPEN = 1;
 const CONNECT_TIMEOUT_MS = 30_000;
 const ANSWER_MS = 10_000; // how long Mozilla gets to answer a ping, as in Firefox
-const REGISTER_TIMEOUT_MS = 15_000;
+// How long registering a channel may take, waiting for a connection included: a phone gives up
+// on pairing after 15 seconds, and should hear why before then.
+const REGISTER_TIMEOUT_MS = 10_000;
 const RECONNECT_MS = 2_000; // first wait before reconnecting; doubles while it keeps failing
 const RECONNECT_MAX_MS = 60_000;
+const STABLE_MS = 60_000; // a connection that lasted this long was a good one: the waits start over
 
 export class MozillaClient {
 	/** True between Mozilla's hello and the connection closing. */
@@ -37,11 +40,13 @@ export class MozillaClient {
 
 	private socket: WebSocket | null = null;
 	private openedAt = 0;
+	private helloAt = 0;
 	private lastHeard = 0;
 	private pingSentAt = 0;
 	private reconnectMs = RECONNECT_MS;
+	/** Set while waiting to reconnect: nothing else opens a connection meanwhile. */
 	private reconnectTimer: number | null = null;
-	private helloWaiters: Array<() => void> = [];
+	private helloWaiters = new Set<() => void>();
 	private registrations = new Map<string, { resolve(endpoint: string): void; reject(error: Error): void; timer: number }>();
 
 	constructor(
@@ -56,6 +61,7 @@ export class MozillaClient {
 	connect(): void {
 		if (this.socket) return;
 		clearTimeout(this.reconnectTimer);
+		this.reconnectTimer = null;
 		let socket: WebSocket;
 		try {
 			socket = new WebSocket(this.url);
@@ -89,7 +95,11 @@ export class MozillaClient {
 	 */
 	check(): void {
 		const now = Date.now();
-		if (!this.socket) return this.connect();
+		if (!this.socket) {
+			// Unless a reconnect is already due: the wait between attempts isn't cut short.
+			if (this.reconnectTimer === null) this.connect();
+			return;
+		}
 		if (!this.connected) {
 			if (now - this.openedAt > CONNECT_TIMEOUT_MS) this.drop("never said hello");
 			return;
@@ -106,13 +116,17 @@ export class MozillaClient {
 
 	/** Registers a new channel, for one phone. Resolves to its ID and its push endpoint. */
 	async registerChannel(): Promise<{ channelID: string; endpoint: string }> {
-		await this.hello();
+		const deadline = Date.now() + REGISTER_TIMEOUT_MS;
+		await this.hello(REGISTER_TIMEOUT_MS);
 		const channelID = crypto.randomUUID();
 		const endpoint = await new Promise<string>((resolve, reject) => {
-			const timer = setTimeout(() => {
-				this.registrations.delete(channelID);
-				reject(new Error("register timeout"));
-			}, REGISTER_TIMEOUT_MS);
+			const timer = setTimeout(
+				() => {
+					this.registrations.delete(channelID);
+					reject(new Error("register timeout"));
+				},
+				Math.max(0, deadline - Date.now()),
+			);
 			this.registrations.set(channelID, { resolve, reject, timer });
 			this.send({ messageType: "register", channelID, key: this.vapidKey });
 		});
@@ -124,16 +138,25 @@ export class MozillaClient {
 		this.send({ messageType: "unregister", channelID });
 	}
 
-	/** Resolves once Mozilla has said hello on the current connection, opening one if need be. */
-	private hello(): Promise<void> {
+	/**
+	 * Resolves once Mozilla has said hello on the current connection, opening one if need be, and
+	 * rejects after `ms`. A reconnect that's already due isn't brought forward: pairing calls
+	 * mustn't cut the wait between attempts short.
+	 */
+	private hello(ms: number): Promise<void> {
 		if (this.connected) return Promise.resolve();
-		this.connect();
+		if (this.reconnectTimer === null) this.connect();
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error("not connected to Mozilla")), CONNECT_TIMEOUT_MS);
-			this.helloWaiters.push(() => {
+			const waiter = () => {
 				clearTimeout(timer);
 				resolve();
-			});
+			};
+			// A waiter that has given up is let go, so that waiting through a long outage costs nothing.
+			const timer = setTimeout(() => {
+				this.helloWaiters.delete(waiter);
+				reject(new Error("not connected to Mozilla"));
+			}, ms);
+			this.helloWaiters.add(waiter);
 		});
 	}
 
@@ -155,17 +178,20 @@ export class MozillaClient {
 				case "hello": {
 					if (message.status !== 200 || typeof message.uaid !== "string") {
 						console.warn(`[mozilla] hello refused (status ${String(message.status)})`);
-						return this.drop("hello refused");
+						// Tried again after the usual wait, which grows while it keeps happening: never at once.
+						return this.drop("hello refused", false);
 					}
 					// A different identity than the one resumed with: Mozilla no longer knows the old
 					// one, and every channel registered under it, with its endpoint, is gone.
 					const { uaid, channelIDs } = this.callbacks.identity();
 					if (message.uaid !== uaid) this.callbacks.saveIdentity(message.uaid);
 					this.connected = true;
-					this.reconnectMs = RECONNECT_MS;
+					this.helloAt = Date.now();
 					this.callbacks.onHello();
 					console.log(`[mozilla] hello ok (uaid ${message.uaid.slice(0, 8)}…)`);
-					for (const waiter of this.helloWaiters.splice(0)) waiter();
+					const waiters = [...this.helloWaiters];
+					this.helloWaiters.clear();
+					for (const waiter of waiters) waiter();
 					if (uaid && message.uaid !== uaid && channelIDs.length) {
 						console.warn(`[mozilla] new uaid: ${channelIDs.length} channel(s) lost`);
 						await this.callbacks.onReset(channelIDs);
@@ -201,19 +227,25 @@ export class MozillaClient {
 		}
 	}
 
-	/** Closes the connection and opens another. */
-	private drop(why: string): void {
+	/**
+	 * Closes the connection and opens another: at once when the minute's check found it dead,
+	 * otherwise after the usual wait.
+	 */
+	private drop(why: string, now = true): void {
 		const socket = this.socket;
 		if (!socket) return;
 		console.log(`[mozilla] dropping the connection: ${why}`);
-		this.closed(socket, 0);
+		this.closed(socket, now);
 		try {
 			socket.close();
 		} catch {}
 	}
 
-	private closed(socket: WebSocket, wait = this.reconnectMs): void {
+	private closed(socket: WebSocket, now = false): void {
 		if (this.socket !== socket) return;
+		// A connection that held for a minute was a good one, and the waits start over. Not at
+		// every hello: a service that answered and then hung up would be tried every two seconds.
+		if (this.connected && Date.now() - this.helloAt >= STABLE_MS) this.reconnectMs = RECONNECT_MS;
 		this.socket = null;
 		this.connected = false;
 		this.pingSentAt = 0;
@@ -223,14 +255,19 @@ export class MozillaClient {
 			waiting.reject(new Error("connection closed"));
 			this.registrations.delete(channelID);
 		}
-		if (wait === 0) return this.connect();
-		console.log(`[mozilla] closed; reconnecting in ${wait}ms`);
+		if (now) return this.connect();
 		this.reconnectLater();
 	}
 
 	private reconnectLater(): void {
 		clearTimeout(this.reconnectTimer);
-		this.reconnectTimer = setTimeout(() => this.connect(), this.reconnectMs);
+		// Up to a quarter longer, by chance, so that attempts don't keep in step with anything.
+		const wait = Math.round(this.reconnectMs * (1 + Math.random() / 4));
+		console.log(`[mozilla] reconnecting in ${wait}ms`);
+		this.reconnectTimer = setTimeout(() => {
+			this.reconnectTimer = null;
+			this.connect();
+		}, wait);
 		this.reconnectMs = Math.min(this.reconnectMs * 2, RECONNECT_MAX_MS);
 	}
 }

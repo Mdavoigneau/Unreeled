@@ -250,6 +250,7 @@ final class FeedModel {
 
     private func load(api: InstagramAPI, replacing: Bool) async {
         let generation = generation
+        let account = SavedCopies.account
         isLoading = true
         defer { if generation == self.generation { isLoading = false } }
         do {
@@ -284,7 +285,7 @@ final class FeedModel {
             } else {
                 posts = fresh
             }
-            if replacing { api.saveFeed(pages) }
+            if replacing { api.saveFeed(pages, account: account) }
             error = nil
         } catch {
             if generation == self.generation {

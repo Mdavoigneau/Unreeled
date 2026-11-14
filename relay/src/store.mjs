@@ -1,5 +1,6 @@
 // Tiny JSON-file store. Holds the relay's single Mozilla identity (uaid) and one record per device:
-//   { deviceId, channelID, endpoint, apnsToken, sandbox, topic, createdAt }
+//   { deviceId, channelID, endpoint, apnsToken, sandbox, topic, createdAt, lastSeen }
+// lastSeen is when the phone was last shown to be real (see relay.mjs and server.mjs).
 // It deliberately stores NO ECDH keys and NO plaintext — the phone owns those, so a compromise of
 // this file leaks only transport identifiers, never message content. Swap for SQLite (node:sqlite)
 // if you outgrow a JSON file; the interface below is all the rest of the service depends on.
@@ -16,6 +17,12 @@ export class Store {
   _load() {
     try { this.data = JSON.parse(fs.readFileSync(this.file, "utf8")); } catch { /* fresh */ }
     this.data.devices ||= {};
+    // Records from before there was a lastSeen start their time now, so that the change drops no
+    // phone. Written at once, or every restart would start it again.
+    const now = new Date().toISOString();
+    const older = this.devices().filter((d) => !(Date.parse(d.lastSeen) > 0));
+    for (const device of older) device.lastSeen = now;
+    if (older.length) this._save();
   }
 
   _save() {
@@ -32,6 +39,8 @@ export class Store {
   devices() { return Object.values(this.data.devices); }
   getByChannel(channelID) { return this.data.devices[channelID]; }
   getByDeviceId(deviceId) { return this.devices().find((d) => d.deviceId === deviceId); }
+  /** The records a phone's token has for an app: one, or more left from before a token had only one. */
+  getByToken(apnsToken, topic) { return this.devices().filter((d) => d.apnsToken === apnsToken && d.topic === topic); }
 
   addDevice(device) { this.data.devices[device.channelID] = device; this._save(); }
   removeByChannel(channelID) { delete this.data.devices[channelID]; this._save(); }

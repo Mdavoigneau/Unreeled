@@ -54,7 +54,10 @@ extension Color {
 
 /// "2h", "3d": the short ages stories show.
 func shortAge(of date: Date) -> String {
-    let seconds = max(0, Date().timeIntervalSince(date))
+    let interval = Date().timeIntervalSince(date)
+    // A date from a timestamp that can't be right (not a number, or endlessly far back) mustn't
+    // give a count of days too large to be a whole number: none goes past 100,000 days.
+    let seconds = interval.isFinite ? min(max(0, interval), 100_000 * 86_400) : 0
     switch seconds {
     case ..<60: return "now"
     case ..<3600: return "\(Int(seconds / 60))m"

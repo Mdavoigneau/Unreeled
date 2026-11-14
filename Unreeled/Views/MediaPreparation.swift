@@ -59,6 +59,9 @@ enum MediaPreparation {
         let output = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mp4")
         defer { try? FileManager.default.removeItem(at: output) }
         session.shouldOptimizeForNetworkUse = true
+        // Without what the camera wrote about it, such as where it was filmed. (Photos are drawn
+        // anew, which keeps none.)
+        session.metadataItemFilter = .forSharing()
         try await session.export(to: output, as: .mp4)
         let data = try Data(contentsOf: output)
 

@@ -12,6 +12,7 @@ import path from "node:path";
 const JWT_TTL_MS = 50 * 60 * 1000;   // Apple requires refresh between 20 and 60 minutes
 const MAX_PAYLOAD = 4096;            // Apple's limit for a push, in bytes
 const EXPIRES_S = 3 * 24 * 3600;     // how long Apple keeps a push for a phone that's off
+const ANSWER_MS = 10_000;            // how long Apple gets to answer a request, connecting included
 // What the notification says when the phone can't decrypt it (its keys are gone), or when the
 // encrypted copy doesn't fit in a push.
 const FALLBACK = { body: "New notification on Instagram" };
@@ -41,14 +42,16 @@ export class ApnsForwarder {
    * @param {boolean} [o.sandbox]  Which of Apple's services a device is on when it didn't say.
    * @param {string}  [o.outbox]   Dry-run only: a folder to write each push to.
    * @param {object}  [o.hosts]    { production, sandbox } addresses, for tests.
+   * @param {number}  [o.answerMs] How long Apple gets to answer, for tests.
    */
-  constructor({ keyFile, keyId, teamId, topics = [], sandbox = false, outbox = "", hosts = HOSTS, logger = console }) {
+  constructor({ keyFile, keyId, teamId, topics = [], sandbox = false, outbox = "", hosts = HOSTS, answerMs = ANSWER_MS, logger = console }) {
     this.keyId = keyId;
     this.teamId = teamId;
     this.topics = topics;
     this.sandbox = sandbox;
     this.outbox = outbox;
     this.hosts = hosts;
+    this.answerMs = answerMs;
     this.log = logger;
     this.enabled = Boolean(keyFile && keyId && teamId && topics.length);
     this.key = this.enabled ? fs.readFileSync(keyFile, "utf8") : null;
@@ -107,19 +110,40 @@ export class ApnsForwarder {
       return { dryRun: true };
     }
 
-    const sandbox = typeof device.sandbox === "boolean" ? device.sandbox : this.sandbox;
-    const host = sandbox ? this.hosts.sandbox : this.hosts.production;
+    const host = this._host(device);
+    const alert = { "apns-push-type": "alert", "apns-priority": "10", "apns-expiration": String(Math.floor(Date.now() / 1000) + EXPIRES_S) };
     try {
-      return await this._post(host, device.apnsToken, topic, payload);
+      return await this._post(host, device.apnsToken, topic, payload, alert);
     } catch (e) {
       if (e instanceof ApnsError) throw e;
       // The connection had gone stale: once more on a fresh one.
       this._clients.get(host)?.destroy();
-      return await this._post(host, device.apnsToken, topic, payload);
+      return await this._post(host, device.apnsToken, topic, payload, alert);
     }
   }
 
-  _post(host, apnsToken, topic, payload) {
+  /**
+   * Whether Apple says it will never deliver to this token for the app, as it says of a made-up
+   * one. Asked with a background push, which shows nothing and which Apple doesn't keep for a
+   * phone that's off. Any other answer, or none in time, isn't held against the phone.
+   */
+  async refuses(device) {
+    const background = { "apns-push-type": "background", "apns-priority": "5", "apns-expiration": "0" };
+    try {
+      await this._post(this._host(device), device.apnsToken, device.topic || this.topics[0] || "", JSON.stringify({ aps: { "content-available": 1 } }), background);
+      return false;
+    } catch (e) {
+      return e instanceof ApnsError && e.gone;
+    }
+  }
+
+  /** Which of Apple's two services a device is on. */
+  _host(device) {
+    const sandbox = typeof device.sandbox === "boolean" ? device.sandbox : this.sandbox;
+    return sandbox ? this.hosts.sandbox : this.hosts.production;
+  }
+
+  _post(host, apnsToken, topic, payload, headers) {
     const client = this._conn(host);
     return new Promise((resolve, reject) => {
       const req = client.request({
@@ -127,22 +151,29 @@ export class ApnsForwarder {
         ":path": `/3/device/${apnsToken}`,
         authorization: `bearer ${this._token()}`,
         "apns-topic": topic,
-        "apns-push-type": "alert",
-        "apns-priority": "10",
-        "apns-expiration": String(Math.floor(Date.now() / 1000) + EXPIRES_S),
+        ...headers,
       });
+      // Not answered in time, connecting included: the connection has stalled without closing.
+      // This request has failed, and the connection is dropped so that the next opens a fresh one.
+      const timer = setTimeout(() => {
+        req.destroy(new Error("APNs didn't answer in time"));
+        client.destroy();
+      }, this.answerMs);
       let status = 0;
       let body = "";
       req.on("response", (h) => (status = h[":status"]));
       req.setEncoding("utf8");
       req.on("data", (d) => (body += d));
       req.on("end", () => {
+        clearTimeout(timer);
         if (status === 200) return resolve({ status });
         let reason = "";
         try { reason = JSON.parse(body).reason || ""; } catch {}
         reject(new ApnsError(status, reason));
       });
       req.on("error", reject);
+      // A request whose connection went away under it, without a word, has failed too.
+      req.on("close", () => { clearTimeout(timer); reject(new Error("APNs connection closed")); });
       req.end(payload);
     });
   }

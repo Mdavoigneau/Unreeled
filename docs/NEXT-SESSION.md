@@ -16,11 +16,11 @@
 
 ## To do, in order
 
-1. **Watch it for some days.** `curl https://relay.unreeled.app/health` should keep answering `"mozilla": true`, and `forwarded` should grow with the notifications: how the connection to Mozilla holds over days on Cloudflare is still unknown, and Instagram has been seen to stop sending without saying so ([mautrix/meta#454](https://github.com/mautrix/meta/issues/454)). If the connection doesn't hold, the Node relay on an always-on machine is the fallback ([relay/README.md](../relay/README.md)).
+1. **Watch it for some days.** `curl -s -H "Authorization: Bearer $OPERATOR_TOKEN" https://relay.unreeled.app/health` should keep answering `"mozilla": true`, and `forwarded` should grow with the notifications (without the operator token, which goes in the relay's secrets file, `/health` only answers `{"ok":true}`): how the connection to Mozilla holds over days on Cloudflare is still unknown, and Instagram has been seen to stop sending without saying so ([mautrix/meta#454](https://github.com/mautrix/meta/issues/454)). If the connection doesn't hold, the Node relay on an always-on machine is the fallback ([relay/README.md](../relay/README.md)).
 2. **Look closer at what arrives:** one notification for each message or two (the relay's count went up by two at a time), how long after the message, and whether the sender's picture shows.
 3. **Pick the release bundle ID.** Apple refuses `app.unreeled`, the one [RELEASING.md](RELEASING.md) names: another developer holds it. Whichever is chosen goes into `APNS_TOPIC` in the relay's secrets, next to the one in use.
 4. **A distributed build** gets its notifications from Apple's production push service, which hasn't carried a push yet.
-5. **Before a public build has it:** decide who runs the shared relay and under which name, deploy the website so the privacy policy's new section is live, and consider App Attest or rate limits on `/pair` in place of the shared pairing token.
+5. **Before a public build has it:** decide who runs the shared relay and under which name, deploy the website so the privacy policy's new section is live, and consider App Attest in place of the shared pairing token (`/pair` now has rate limits and checks each phone's token with Apple).
 
 ## Worth knowing
 

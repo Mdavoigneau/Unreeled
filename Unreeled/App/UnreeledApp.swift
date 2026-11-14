@@ -40,6 +40,8 @@ struct RootView: View {
     @AppStorage(PushNotifications.askedKey) private var askedNotifications = false
     @State private var stories = StoriesModel()
     @State private var inbox = InboxModel()
+    /// The account whose stories and inbox these are.
+    @State private var account: String?
 
     var body: some View {
         ZStack {
@@ -67,19 +69,27 @@ struct RootView: View {
         // Outside the cover, so the story viewer gets it too.
         .environment(stories)
         .environment(inbox)
-        .onChange(of: session.isLoggedIn) { _, loggedIn in
-            if !loggedIn {
-                stories = StoriesModel()
-                inbox = InboxModel()
-            }
+        // A login that ends, or another account's: nothing of the last one stays on screen. The
+        // screens wait for this (see content), so that they load into the new account's.
+        .onChange(of: session.userID, initial: true) { _, userID in
+            guard userID != account else { return }
+            account = userID
+            stories = StoriesModel()
+            inbox = InboxModel()
         }
         .preferredColorScheme(.light)
         .tint(Theme.accent)
         // Notifications follow the login: kept working while it lasts, undone when it ends,
-        // however it ends.
+        // however it ends. Coming back to the app, the cookies are checked first: the login may
+        // have ended meanwhile.
         .task(id: session.state) { await followLogin() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await followLogin() } }
+            if phase == .active {
+                Task {
+                    await session.refresh()
+                    await followLogin()
+                }
+            }
         }
         #if DEBUG
         .task(id: session.isLoggedIn) {
@@ -97,7 +107,11 @@ struct RootView: View {
             case .loggedOut:
                 LoginView()
             case .loggedIn:
-                if PushNotifications.isOffered, !askedNotifications, !notifications.isOn {
+                if account != session.userID {
+                    // A moment, until the stories and inbox are this account's: screens made
+                    // before would load into the last ones, which are then replaced.
+                    Color.white
+                } else if PushNotifications.isOffered, !askedNotifications, !notifications.isOn {
                     NotificationsOffer { askedNotifications = true }
                 } else {
                     home
@@ -114,6 +128,7 @@ struct RootView: View {
         }
     }
 
+    /// Made anew for each account, so no screen of one is left for the next.
     @ViewBuilder
     private var home: some View {
         #if DEBUG
@@ -125,10 +140,10 @@ struct RootView: View {
             // -post <code> opens that post natively.
             NavigationStack { PostLoaderView(code: code).routes() }
         } else {
-            MainView()
+            MainView().id(session.userID)
         }
         #else
-        MainView()
+        MainView().id(session.userID)
         #endif
     }
 }

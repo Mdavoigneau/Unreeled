@@ -60,10 +60,13 @@ extension InstagramAPI {
         return Page(items: posts, cursor: feed.nextCursor)
     }
 
-    /// The pages of the feed loaded last, for showing them at once next time.
-    func saveFeed(_ pages: [Data]) {
+    /// The pages of the feed loaded last, for showing them at once next time. `account` is the one
+    /// logged in when they were asked for (SavedCopies).
+    func saveFeed(_ pages: [Data], account: String?) {
         guard !pages.isEmpty else { return }
-        ResponseCache.shared.store(Data("[".utf8) + Data(pages.joined(separator: Data(",".utf8))) + Data("]".utf8), for: "feed")
+        ResponseCache.shared.store(
+            Data("[".utf8) + Data(pages.joined(separator: Data(",".utf8))) + Data("]".utf8), for: "feed", account: account
+        )
     }
 
     /// The feed as it was last loaded, without ads. About a megabyte: read off the main thread.
@@ -79,9 +82,10 @@ extension InstagramAPI {
     /// A profile's header. `keep` is for your own: its saved copy is kept apart from the other
     /// screens', so visiting profiles never pushes it out (see ResponseCache).
     func profile(id: String, keep: Bool = false) async throws -> Profile {
+        let account = SavedCopies.account
         let data = try await queryData("PolarisProfilePageContentQuery", ["enable_integrity_filters": true, "id": id], at: ["user"])
         let profile = try await decoded(Profile.self, from: data)
-        ResponseCache.shared.store(data, for: keep ? Self.keptProfileKey : "profile-\(id)")
+        ResponseCache.shared.store(data, for: keep ? Self.keptProfileKey : "profile-\(id)", account: account)
         return profile
     }
 
@@ -101,13 +105,17 @@ extension InstagramAPI {
             else { return nil }
             let posts = ResponseCache.shared.data(for: Self.keptPostsKey)
                 .flatMap { try? InstagramAPI.decodeSaved(Connection<Media>.self, from: $0) }
+                .flatMap { saved in saved.nodes.allSatisfy { Self.isOwned($0, by: profile.id) } ? saved : nil }
                 .map { Page(items: $0.nodes, cursor: $0.nextCursor) }
             return (profile, posts)
         }.value
     }
 
-    /// A profile's posts, newest first. With `keep`, your own: see `profile(id:keep:)`.
-    func posts(username: String, cursor: String? = nil, keep: Bool = false) async throws -> Page<Media> {
+    /// A profile's posts, newest first, asked for by username as the website does. `ownerID` is
+    /// the profile's own: the first page is kept under it (with `keep`, as your own: see
+    /// `profile(id:keep:)`), unless it holds someone else's posts.
+    func posts(username: String, ownerID: String, cursor: String? = nil, keep: Bool = false) async throws -> Page<Media> {
+        let account = SavedCopies.account
         let options: [String: Any] = [
             "count": 12,
             "include_reel_media_seen_timestamp": true,
@@ -129,17 +137,29 @@ extension InstagramAPI {
                 at: ["xdt_api__v1__feed__user_timeline_graphql_connection"]
             )
             posts = try await decoded(Connection<Media>.self, from: data)
-            ResponseCache.shared.store(data, for: keep ? Self.keptPostsKey : "posts-\(username)")
+            // The username belongs to another account now: its posts aren't kept as this profile's.
+            if posts.nodes.allSatisfy({ Self.isOwned($0, by: ownerID) }) {
+                ResponseCache.shared.store(data, for: keep ? Self.keptPostsKey : "posts-\(ownerID)", account: account)
+            }
         }
         return Page(items: posts.nodes, cursor: posts.nextCursor)
     }
 
-    /// The first posts of a profile as they were last loaded.
-    func cachedPosts(username: String) -> Page<Media>? {
-        guard let data = ResponseCache.shared.data(for: "posts-\(username)"),
-              let posts = try? decode(Connection<Media>.self, from: data)
+    /// The first posts of a profile as they were last loaded, by the profile's ID.
+    func cachedPosts(ownerID: String) -> Page<Media>? {
+        guard let data = ResponseCache.shared.data(for: "posts-\(ownerID)"),
+              let posts = try? decode(Connection<Media>.self, from: data),
+              posts.nodes.allSatisfy({ Self.isOwned($0, by: ownerID) })
         else { return nil }
         return Page(items: posts.nodes, cursor: posts.nextCursor)
+    }
+
+    /// Whether a post is the account's with this ID, as far as the post says: a username can pass
+    /// to another account, and posts asked for by username are whoever has it now. A post that
+    /// doesn't name its owner's ID counts as theirs.
+    nonisolated static func isOwned(_ post: Media, by ownerID: String) -> Bool {
+        guard let owner = post.user?.pk?.value ?? post.user?.rawID?.value else { return true }
+        return owner == ownerID
     }
 
     /// A post by its short code, the part after /p/ in its link.
@@ -183,13 +203,14 @@ extension InstagramAPI {
 
     /// Accounts you follow that have stories, in the website's order.
     func storiesTray() async throws -> [Reel] {
+        let account = SavedCopies.account
         let data = try await queryData(
             "PolarisStoriesV3TrayContainerQuery",
             ["data": ["is_following_feed": false, "reason": "web_home"]],
             at: ["xdt_api__v1__feed__reels_tray"]
         )
         let tray = try await decoded(ReelsTray.self, from: data)
-        ResponseCache.shared.store(data, for: "tray")
+        ResponseCache.shared.store(data, for: "tray", account: account)
         return tray.tray?.elements ?? []
     }
 
@@ -204,13 +225,14 @@ extension InstagramAPI {
         #if DEBUG
         NetworkRecorder.append(["time": Date().ISO8601Format(), "storiesBatch": userIDs.count])
         #endif
+        let account = SavedCopies.account
         let data = try await queryData(
             "PolarisStoriesV3ReelPageStandaloneQuery",
             ["reel_ids_arr": userIDs],
             at: ["xdt_api__v1__feed__reels_media"]
         )
         let media = try await decoded(ReelsMedia.self, from: data)
-        Task.detached(priority: .utility) { StoryFiles.shared.saveReels(from: data) }
+        Task.detached(priority: .utility) { StoryFiles.shared.saveReels(from: data, account: account) }
         return media.reelsMedia?.elements ?? []
     }
 
@@ -223,7 +245,8 @@ extension InstagramAPI {
             "reelId": ownerID,
             "reelMediaId": item.id,
             "reelMediaOwnerId": ownerID,
-            "reelMediaTakenAt": Int(item.takenAt ?? 0),
+            // 0 for a time that isn't a whole number of seconds Int can hold.
+            "reelMediaTakenAt": Int(exactly: (item.takenAt ?? 0).rounded()) ?? 0,
             "viewSeenAt": Int(Date().timeIntervalSince1970),
         ])
     }
@@ -232,13 +255,14 @@ extension InstagramAPI {
 
     /// Your conversations, newest first, and what pages through the rest.
     func inbox() async throws -> (threads: [DirectThread], mailboxID: String?, cursor: String?) {
+        let account = SavedCopies.account
         let data = try await queryData(
             "PolarisDirectInboxMobileQuery",
             ["device_id_for_iris_subscription": Self.directDeviceID],
             at: ["get_slide_mailbox_for_iris_subscription"]
         )
         let inbox = Self.page(of: try await decoded(Mailbox.self, from: data))
-        ResponseCache.shared.store(data, for: "inbox")
+        ResponseCache.shared.store(data, for: "inbox", account: account)
         return inbox
     }
 
@@ -302,13 +326,14 @@ extension InstagramAPI {
 
     /// A conversation with its latest messages. Reading it doesn't mark it read.
     func thread(id threadFbid: String) async throws -> DirectThread? {
+        let account = SavedCopies.account
         let data = try await queryData(
             "IGDThreadDetailQuery",
             ["min_uq_seq_id": NSNull(), "thread_fbid": threadFbid],
             at: ["get_slide_thread_nullable"]
         )
         guard let thread = try await decoded(ThreadDetail.self, from: data).asIgDirectThread else { return nil }
-        ThreadStore.save(data, thread: thread, id: threadFbid)
+        ThreadStore.save(data, thread: thread, id: threadFbid, account: account)
         return thread
     }
 
@@ -398,6 +423,12 @@ extension InstagramAPI {
         let id = UUID().uuidString.lowercased()
         UserDefaults.standard.set(id, forKey: "directDeviceID")
         return id
+    }
+
+    /// When a login ends: the next one gets a new ID, as a new browser would, so Instagram can't
+    /// tie the two accounts together by it. So does a phone the app's data was restored onto.
+    static func forgetDirectDeviceID() {
+        UserDefaults.standard.removeObject(forKey: "directDeviceID")
     }
 
     // MARK: Photos and videos in messages
@@ -513,6 +544,7 @@ extension InstagramAPI {
         #if DEBUG
         NetworkRecorder.append(["time": Date().ISO8601Format(), "storyDelete": mediaID])
         #endif
+        guard Self.isID(mediaID) else { throw URLError(.badURL) }
         let data = try await send("POST", "/api/v1/web/create/\(mediaID)/delete/")
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         guard json?["did_delete"] as? Bool == true else { throw Failure.query("Instagram didn't delete it.") }
@@ -552,11 +584,18 @@ extension InstagramAPI {
         #if DEBUG
         NetworkRecorder.append(["time": Date().ISO8601Format(), "followRequest": approve ? "approve" : "ignore", "user": userID])
         #endif
+        guard Self.isID(userID) else { throw URLError(.badURL) }
         _ = try await send(
             "POST",
             "/api/v1/friendships/\(approve ? "approve" : "ignore")/\(userID)/",
             form: approve ? ["has_seen_uk_osa_prompt": "false"] : [:]
         )
+    }
+
+    /// An ID Instagram gave: digits only, as one that goes into a request's address must be, so
+    /// a malformed one can't point the request somewhere else.
+    private nonisolated static func isID(_ text: String) -> Bool {
+        !text.isEmpty && text.allSatisfy { ("0"..."9").contains($0) }
     }
 
     // MARK: Story likes and replies
@@ -604,7 +643,9 @@ extension InstagramAPI {
     }
 
     private func storyShareReply(_ text: String, item: Media, ownerID: String, reelID: String, offlineID: String) async throws -> SentMessage {
-        try await query(
+        // A JSON list as text, as the website sends it.
+        let recipients = String(decoding: try JSONSerialization.data(withJSONObject: [ownerID]), as: UTF8.self)
+        return try await query(
             "IGDirectStoryShareReplyMutation",
             [
                 "data": [
@@ -621,7 +662,7 @@ extension InstagramAPI {
                     "forwarded_from_thread_id": NSNull(),
                     "is_forwarded_from_own_message": NSNull(),
                     "offline_threading_id": offlineID,
-                    "recipient_users": "[\"\(ownerID)\"]",
+                    "recipient_users": recipients,
                     "thread_id": NSNull(),
                 ],
             ],
@@ -685,6 +726,37 @@ extension InstagramAPI {
         guard json?["status"] as? String == "ok" else {
             throw Failure.query("Instagram didn't take the push address.")
         }
+    }
+
+    // MARK: The login
+
+    /// Ends this login at Instagram, so its session cookie stops working wherever a copy of it may
+    /// be. It mirrors the website's own Log Out (PolarisAPILogout): a form posted the way the
+    /// website posts the push registration above.
+    func endSession(userID: String) async throws {
+        _ = try await send("POST", "/api/v1/web/accounts/logout/ajax/", form: [
+            "one_tap_app_login": "0",
+            "user_id": userID,
+            "jazoest": await formChecksum(),
+        ])
+    }
+
+    /// One more look after an answer that said the login had ended, which an error page on the way
+    /// can say too: one small request that needs the login (Direct search's suggestions), sent as
+    /// the website's REST calls are. True when Instagram answers that the login has ended, false
+    /// when it answers as usual, nil when the answer says neither (no connection, Instagram
+    /// failing or busy).
+    func loginHasEnded() async -> Bool? {
+        guard let (status, body) = try? await raw("GET", "/api/v1/direct_v2/ranked_recipients/?mode=universal&show_threads=true")
+        else { return nil }
+        let json = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any]
+        // Instagram's own ways of saying it: 401, a REST call's require_login or login_required,
+        // and the website's "Not logged in" (1357001).
+        if status == 401 || json?["require_login"] as? Bool == true || json?["message"] as? String == "login_required"
+            || json?["error"] as? Int == 1357001 {
+            return true
+        }
+        return json != nil && (200..<300).contains(status) ? false : nil
     }
 }
 

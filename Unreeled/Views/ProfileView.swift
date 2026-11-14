@@ -26,7 +26,7 @@ struct ProfileView: View {
     var body: some View {
         ScrollView {
             if let profile = model.profile {
-                ProfileHeader(profile: profile, isOwn: isOwn) {
+                ProfileHeader(profile: profile, isOwn: isOwn, isCurrent: model.isCurrent) {
                     stories.open([profile.id])
                 }
                 GridStrip()
@@ -96,6 +96,8 @@ struct ProfileView: View {
 private struct ProfileHeader: View {
     let profile: Profile
     let isOwn: Bool
+    /// Instagram's copy, not the saved one, whose username may be someone else's by now.
+    let isCurrent: Bool
     let openStory: () -> Void
 
     @Environment(StoriesModel.self) private var stories
@@ -147,17 +149,24 @@ private struct ProfileHeader: View {
             .buttonStyle(.plain)
         } else if profile.friendshipStatus?.following == true {
             Text("Following").outlinedButton()
-        } else {
-            // Following isn't native yet: it happens on the website.
+        } else if isCurrent {
+            // Following isn't native yet: it happens on the website, by the username Instagram
+            // just sent.
             NavigationLink(value: Route.web(path: "/\(profile.username)/", title: profile.username)) {
-                Text("Follow")
-                    .font(Theme.font(14, .medium))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 30)
-                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 4))
+                followLabel
             }
             .buttonStyle(.plain)
+        } else {
+            followLabel.opacity(0.5)
         }
+    }
+
+    private var followLabel: some View {
+        Text("Follow")
+            .font(Theme.font(14, .medium))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 30)
+            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 4))
     }
 }
 
@@ -236,6 +245,8 @@ final class ProfileModel {
     var isLoading = false
     var error: ShownError?
     private var cursor: String?
+    /// The profile's ID, which its posts carry.
+    private var ownerID: String?
     /// When Instagram's copy last came.
     private var loadedAt: Date?
 
@@ -244,12 +255,15 @@ final class ProfileModel {
         loadedAt.map { Date.now.timeIntervalSince($0) > 5 * 60 } ?? true
     }
 
+    /// Instagram's copy is on screen, not only the saved one.
+    var isCurrent: Bool { loadedAt != nil }
+
     /// Your own profile as it was last time, read off the main thread, with the pictures of its
     /// first posts decoded from the phone: the Profile tab opens complete. Nothing goes to Instagram.
     func showSaved(userID: String?, api: InstagramAPI) async {
         guard profile == nil, let saved = await api.keptProfile(), saved.profile.id == userID, profile == nil else { return }
         profile = saved.profile
-        if let page = saved.posts { show(page) }
+        if let page = saved.posts { show(page, of: saved.profile.id) }
         let pictures = [saved.profile.avatarURL] + posts.prefix(12).map { $0.imageURL(width: GridThumbnail.pixels) }
         ImageCache.shared.warm(pictures.compactMap { $0 })
     }
@@ -259,7 +273,7 @@ final class ProfileModel {
         if profile == nil, isOwn { await showSaved(userID: viewerID, api: api) }
         if profile == nil, let saved = api.cachedProfile(id: id) {
             profile = saved
-            if !saved.isLocked(for: viewerID), let page = api.cachedPosts(username: saved.username) { show(page) }
+            if !saved.isLocked(for: viewerID), let page = api.cachedPosts(ownerID: id) { show(page, of: id) }
         }
         // Header and posts at once, when the username is known: given, or your saved profile's.
         let username = username ?? (isOwn ? profile?.username : nil)
@@ -268,19 +282,26 @@ final class ProfileModel {
         do {
             if let username {
                 async let fresh = api.profile(id: id, keep: isOwn)
-                async let page = api.posts(username: username, keep: isOwn)
+                async let page = api.posts(username: username, ownerID: id, keep: isOwn)
                 let profile = try await fresh
                 self.profile = profile
-                if profile.username == username {
-                    show(try await page)
-                } else if !profile.isLocked(for: viewerID) {
-                    // Your username changed since last time.
-                    show(try await api.posts(username: profile.username, keep: isOwn))
+                if profile.isLocked(for: viewerID) {
+                    // Private now, and you don't follow them: their posts don't show, saved or not.
+                    show(Page(items: [], cursor: nil), of: id)
+                } else if profile.username == username {
+                    show(try await page, of: id)
+                } else {
+                    // Their username changed since last time.
+                    show(try await api.posts(username: profile.username, ownerID: id, keep: isOwn), of: id)
                 }
             } else {
                 let profile = try await api.profile(id: id, keep: isOwn)
                 self.profile = profile
-                if !profile.isLocked(for: viewerID) { show(try await api.posts(username: profile.username, keep: isOwn)) }
+                if profile.isLocked(for: viewerID) {
+                    show(Page(items: [], cursor: nil), of: id)
+                } else {
+                    show(try await api.posts(username: profile.username, ownerID: id, keep: isOwn), of: id)
+                }
             }
             loadedAt = .now
             error = nil
@@ -290,16 +311,16 @@ final class ProfileModel {
     }
 
     func loadMore(near post: Media, api: InstagramAPI) {
-        guard !isLoading, let cursor, let username = profile?.username,
+        guard !isLoading, let cursor, let username = profile?.username, let ownerID,
               let index = posts.firstIndex(where: { $0.id == post.id }), index >= posts.count - 6
         else { return }
         Task {
             isLoading = true
             defer { isLoading = false }
             do {
-                let page = try await api.posts(username: username, cursor: cursor)
+                let page = try await api.posts(username: username, ownerID: ownerID, cursor: cursor)
                 var seen = Set(posts.map(\.id))
-                posts += page.items.filter { seen.insert($0.id).inserted }
+                posts += page.items.filter { InstagramAPI.isOwned($0, by: ownerID) && seen.insert($0.id).inserted }
                 self.cursor = page.cursor
             } catch {
                 self.error = ShownError(error)
@@ -307,8 +328,11 @@ final class ProfileModel {
         }
     }
 
-    private func show(_ page: Page<Media>) {
-        posts = page.items
+    /// A page of the profile's posts, without any that aren't its own: a username can pass to
+    /// another account, and posts are asked for by username.
+    private func show(_ page: Page<Media>, of ownerID: String) {
+        self.ownerID = ownerID
+        posts = page.items.filter { InstagramAPI.isOwned($0, by: ownerID) }
         cursor = page.cursor
     }
 }

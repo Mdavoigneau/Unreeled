@@ -7,6 +7,7 @@ import type { PushMessage } from "./mozilla.ts";
 const JWT_TTL_MS = 50 * 60 * 1000; // Apple wants a token renewed between 20 and 60 minutes
 const MAX_PAYLOAD = 4096; // Apple's limit for a push, in bytes
 const EXPIRES_S = 3 * 24 * 3600; // how long Apple keeps a push for a phone that's off
+const ANSWER_MS = 10_000; // how long Apple gets to answer, unless the tests say otherwise
 // What the notification says when the phone can't decrypt it (its keys are gone), or when the
 // encrypted copy doesn't fit in a push.
 const FALLBACK = { body: "New notification on Instagram" };
@@ -52,7 +53,7 @@ export function payload(message: PushMessage): string {
 }
 
 export class Apns {
-	/** False without Apple's key: a dry run. */
+	/** False without Apple's key, or without a bundle ID to send for: a dry run. */
 	readonly enabled: boolean;
 	private jwt: { token: string; at: number } | undefined;
 	private key: Promise<CryptoKey> | undefined;
@@ -63,33 +64,55 @@ export class Apns {
 			key?: string;
 			keyId?: string;
 			teamId?: string;
+			/**
+			 * The bundle IDs the relay serves. The key is the team's and would sign a push for any
+			 * of its apps, so without them nothing is sent.
+			 */
+			topics: string[];
 			/** Where both of Apple's services are, for the tests. */
 			host?: string;
+			/** How long Apple gets to answer, for the tests. */
+			answerMs?: number;
 		},
 	) {
-		this.enabled = Boolean(settings.key && settings.keyId && settings.teamId);
+		this.enabled = Boolean(settings.key && settings.keyId && settings.teamId && settings.topics.length);
 	}
 
 	/** Sends one push to a phone. Throws an ApnsError when Apple refuses it. */
 	async send(device: Device, body: string): Promise<void> {
-		const host = this.settings.host ?? (device.sandbox ? HOSTS.sandbox : HOSTS.production);
-		const response = await fetch(`${host}/3/device/${device.apnsToken}`, {
-			method: "POST",
-			headers: {
-				authorization: `bearer ${await this.token()}`,
-				"apns-topic": device.topic,
+		const response = await this.post(
+			device,
+			{
 				"apns-push-type": "alert",
 				"apns-priority": "10",
 				"apns-expiration": String(Math.floor(Date.now() / 1000) + EXPIRES_S),
 			},
 			body,
-		});
+		);
 		if (response.status === 200) return void (await response.arrayBuffer());
-		let reason = "";
+		throw new ApnsError(response.status, await reason(response));
+	}
+
+	/**
+	 * Whether Apple says it will never deliver to this token for the app, as it says of a made-up
+	 * one. Asked with a background push, which shows nothing and which Apple doesn't keep for a
+	 * phone that's off. Any other answer, or none in time, isn't held against the phone.
+	 */
+	async refuses(phone: Pick<Device, "apnsToken" | "sandbox" | "topic">): Promise<boolean> {
 		try {
-			reason = ((await response.json()) as { reason?: string }).reason ?? "";
-		} catch {}
-		throw new ApnsError(response.status, reason);
+			const response = await this.post(
+				phone,
+				{ "apns-push-type": "background", "apns-priority": "5", "apns-expiration": "0" },
+				JSON.stringify({ aps: { "content-available": 1 } }),
+			);
+			if (response.status === 200) {
+				await response.arrayBuffer();
+				return false;
+			}
+			return new ApnsError(response.status, await reason(response)).gone;
+		} catch {
+			return false;
+		}
 	}
 
 	/**
@@ -105,12 +128,27 @@ export class Apns {
 				method: "POST",
 				headers,
 				body: JSON.stringify({ aps: { alert: FALLBACK } }),
+				signal: AbortSignal.timeout(this.settings.answerMs ?? ANSWER_MS),
 			});
 			const reason = ((await response.json().catch(() => ({}))) as { reason?: string }).reason;
 			return { reachable: true, status: response.status, reason };
 		} catch (error) {
 			return { reachable: false, error: String(error) };
 		}
+	}
+
+	/**
+	 * One request to Apple for a phone. Given up on when Apple hasn't answered in time, so that a
+	 * request it took and never answered can't hold a push, or a pairing, for ever.
+	 */
+	private async post(phone: Pick<Device, "apnsToken" | "sandbox" | "topic">, headers: Record<string, string>, body: string): Promise<Response> {
+		const host = this.settings.host ?? (phone.sandbox ? HOSTS.sandbox : HOSTS.production);
+		return fetch(`${host}/3/device/${phone.apnsToken}`, {
+			method: "POST",
+			headers: { authorization: `bearer ${await this.token()}`, "apns-topic": phone.topic, ...headers },
+			body,
+			signal: AbortSignal.timeout(this.settings.answerMs ?? ANSWER_MS),
+		});
 	}
 
 	/** The token Apple wants with each push: signed with the push key, good for an hour. */
@@ -127,6 +165,15 @@ export class Apns {
 		);
 		this.jwt = { token: `${header}.${claims}.${base64url(new Uint8Array(signature))}`, at: now };
 		return this.jwt.token;
+	}
+}
+
+/** Why Apple refused a push, from its answer: BadDeviceToken, for one. */
+async function reason(response: Response): Promise<string> {
+	try {
+		return ((await response.json()) as { reason?: string }).reason ?? "";
+	} catch {
+		return "";
 	}
 }
 

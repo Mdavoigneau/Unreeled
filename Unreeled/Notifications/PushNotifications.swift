@@ -24,6 +24,9 @@ final class PushNotifications: NSObject {
     struct Registration: Codable {
         /// The relay's name for this phone.
         var deviceID: String
+        /// The relay that has it, by its address: where it's retired. Nil only in one carried
+        /// over by a build without a relay.
+        var relay: String?
         /// The push address Instagram sends to.
         var endpoint: String
         /// The login it was registered from.
@@ -36,17 +39,33 @@ final class PushNotifications: NSObject {
         var registeredAt: Date
         /// When the relay last confirmed the address.
         var checkedAt: Date?
+        /// When this build took it over from a build before 14 November 2026, which kept it in
+        /// UserDefaults: what that build left in its notifications is trusted, as it trusted it,
+        /// in those delivered before then (see `routing(of:)`).
+        var carriedOverAt: Date?
         /// Debug builds: made in a dry run, so Instagram never had it.
         var isDryRun: Bool?
+
+        /// Where it's retired.
+        var record: RelayRecord { RelayRecord(deviceID: deviceID, relay: relay ?? PushRelay.configured?.address) }
     }
 
+    /// The relay's record of this phone, as the app keeps it to retire it: the relay's name for
+    /// the phone, and the relay's address.
+    struct RelayRecord: Codable, Equatable {
+        let deviceID: String
+        let relay: String?
+    }
+
+    /// Kept in the Keychain (PushStore), where it stays on this phone.
     private(set) var registration: Registration? {
-        didSet { UserDefaults.standard.set(registration.flatMap { try? JSONEncoder().encode($0) }, forKey: Self.registrationKey) }
+        didSet { Self.keep(registration) }
     }
     /// False once you've refused notifications for Unreeled in iOS, or switched them off there.
     private(set) var isAllowed = true
     private(set) var isWorking = false
     private var isRefreshing = false
+    private var isRetiring = false
     /// Why turning them on didn't work, in words for the screen.
     private(set) var failure: String?
 
@@ -54,13 +73,23 @@ final class PushNotifications: NSObject {
     var opened: InstagramPush.Routing?
     /// Goes up when a notification arrives while the app is open, for screens to look again.
     private(set) var arrivals = 0
-    /// The IDs of the conversation on screen: its notifications don't show on top of it.
-    var visibleThread: Set<String> = []
+    /// The IDs of the conversation on screen: its notifications don't show on top of it, and
+    /// those already in Notification Centre go, since it shows their messages itself.
+    var visibleThread: Set<String> = [] {
+        didSet { if visibleThread != oldValue { clearDelivered(threads: visibleThread) } }
+    }
 
     var isOn: Bool { registration != nil }
 
+    /// Where builds before 14 November 2026 kept the registration and the pairings to retire:
+    /// UserDefaults, which go into the phone's backups. Read once, to carry them over.
     private static let registrationKey = "pushRegistration"
     private static let retiredKey = "pushRetired"
+    /// Their names in the Keychain (PushStore), with the pairings just made, until they're in
+    /// the registration or retired.
+    private static let registrationItem = "registration"
+    private static let retiredItem = "retired"
+    private static let pendingItem = "pending"
     /// Instagram is given the address again this often, in case it dropped it.
     private static let reassertInterval: TimeInterval = 7 * 24 * 3600
     /// The relay is asked this often whether the address is still the one it has: after it
@@ -68,17 +97,81 @@ final class PushNotifications: NSObject {
     private static let checkInterval: TimeInterval = 24 * 3600
 
     private override init() {
-        registration = UserDefaults.standard.data(forKey: Self.registrationKey)
+        let found = PushStore.read(Self.registrationItem)
+        var kept: Registration?
+        // One this build can't read, as a later build might write.
+        var unreadable: Leftover?
+        if case .found(let data) = found {
+            kept = try? JSONDecoder().decode(Registration.self, from: data)
+            if kept == nil { unreadable = try? JSONDecoder().decode(Leftover.self, from: data) }
+        }
+        // Where builds before 14 November 2026 kept it. One there with another pairing than the
+        // Keychain's is the newer: such a build ran since, and turned notifications on again.
+        let earlier = UserDefaults.standard.data(forKey: Self.registrationKey)
             .flatMap { try? JSONDecoder().decode(Registration.self, from: $0) }
+            .flatMap { $0.deviceID == kept?.deviceID ? nil : $0 }
+        registration = earlier ?? kept
         super.init()
-        if registration != nil, PushKeys.areGone {
-            // The keys didn't come along, as on a phone restored from a backup: the old phone,
-            // if it's still in use, keeps its pairing.
+        // The phone hasn't been unlocked since it started: nothing is changed on what can't be
+        // read yet.
+        if case .locked = found { return }
+
+        if let unreadable {
+            // Notifications are off as far as this build can tell, so the relay forgets the phone.
+            retire(RelayRecord(deviceID: unreadable.deviceID, relay: unreadable.relay ?? PushRelay.configured?.address))
+            PushStore.write(nil, Self.registrationItem)
+        }
+        if earlier != nil, let kept {
+            // Replaced by the earlier build's, and of no use without the keys it had.
+            retire(kept.record)
+        }
+        if let stored = registration, PushKeys.areGone {
+            // From UserDefaults, the keys didn't come along, as on a phone restored from a backup:
+            // the old phone, if it's still in use, keeps its pairing. From the Keychain, which
+            // stays on this phone, the pairing is this phone's, and of no use without its keys.
+            if earlier == nil { retire(stored.record) }
             registration = nil
+            // didSet doesn't run in an initializer, so the Keychain and UserDefaults are told here.
+            Self.keep(nil)
         } else if registration == nil {
             // The Keychain outlives a deleted app.
             PushKeys.delete()
+        } else if var carried = earlier {
+            // Into the Keychain, with the relay this build has, which made it as far as can be
+            // known. UserDefaults keep it until the Keychain has it.
+            carried.relay = carried.relay ?? PushRelay.configured?.address
+            carried.carriedOverAt = .now
+            registration = carried
+            // didSet doesn't run in an initializer: written to the Keychain here, at the first
+            // launch, so that carriedOverAt stays the time of the update.
+            Self.keep(carried)
+        } else {
+            // A copy of the Keychain's that UserDefaults still had.
+            UserDefaults.standard.removeObject(forKey: Self.registrationKey)
         }
+
+        // Pairings to retire that an earlier build kept, by name only: made with this build's
+        // relay too, as far as can be known.
+        if let names = UserDefaults.standard.stringArray(forKey: Self.retiredKey) {
+            let waiting = Self.records(Self.retiredItem)
+            let carried = names.map { RelayRecord(deviceID: $0, relay: PushRelay.configured?.address) }
+            if Self.keep(waiting + carried.filter { !waiting.contains($0) }, as: Self.retiredItem) {
+                UserDefaults.standard.removeObject(forKey: Self.retiredKey)
+            }
+        }
+        // Pairings that a launch which ended early made but neither kept nor retired.
+        let held = Self.records(Self.pendingItem)
+        if !held.isEmpty {
+            let waiting = Self.records(Self.retiredItem)
+            let left = held.filter { $0.deviceID != registration?.deviceID && !waiting.contains($0) }
+            if Self.keep(waiting + left, as: Self.retiredItem) { Self.keep([], as: Self.pendingItem) }
+        }
+    }
+
+    /// What can be read of a registration this build can't decode: enough to retire it.
+    private struct Leftover: Decodable {
+        let deviceID: String
+        let relay: String?
     }
 
     // MARK: On and off
@@ -95,19 +188,23 @@ final class PushNotifications: NSObject {
             guard isAllowed else { return true }
             let token = try await appleToken()
             let pairing = try await relay.pair(appleToken: token, deviceID: nil)
+            let made = RelayRecord(deviceID: pairing.deviceId, relay: relay.address)
+            // Kept at once: if the app ends before it's saved below, the next launch retires it.
+            Self.hold(made)
             do {
                 let keys = try PushKeys.create()
                 try await register(pairing.endpoint, keys: keys, api: api)
             } catch {
                 // No keys, or Instagram didn't take the address: leave nothing behind.
                 PushKeys.delete()
-                retire(pairing.deviceId)
+                abandon(made)
                 throw error
             }
             registration = Registration(
-                deviceID: pairing.deviceId, endpoint: pairing.endpoint, userID: userID,
+                deviceID: pairing.deviceId, relay: relay.address, endpoint: pairing.endpoint, userID: userID,
                 appleToken: token, since: .now, registeredAt: .now, checkedAt: .now
             )
+            Self.release(made)
             #if DEBUG
             if Self.isDryRun { registration?.isDryRun = true }
             #endif
@@ -125,13 +222,19 @@ final class PushNotifications: NSObject {
 
     /// Turns notifications off: the keys are deleted, so nothing sent from now on can be read,
     /// and the relay is told to forget this phone. Instagram has no call to take an address
-    /// back; it stops sending once the address stops answering.
+    /// back; it stops sending once the address stops answering. The notifications already shown
+    /// go too: what they quote is this login's. Logging out comes here, by any route.
     func turnOff() async {
-        guard let registration else { return }
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        guard let registration else {
+            // Off already, as while logged out: a relay that couldn't be reached last time is
+            // asked again.
+            return retire()
+        }
         failure = nil
         self.registration = nil
         PushKeys.delete()
-        retire(registration.deviceID)
+        retire(registration.record)
     }
 
     /// At launch and when the app comes back: keeps what was turned on working. The relay is
@@ -154,25 +257,53 @@ final class PushNotifications: NSObject {
         if registration.isDryRun == true, !Self.isDryRun { return await turnOff() }
         #endif
         guard isAllowed, let relay = PushRelay.configured, let keys = PushKeys.load() else { return }
+        // Paired with a relay this build doesn't use: it pairs with its own now, and leaves the other.
+        let hasMoved = registration.record.relay != relay.address
+        // A pairing made here, until it's saved or retired.
+        var made: RelayRecord?
         do {
             let token = try await appleToken()
+            // Whenever the app waits, notifications can be turned off, or off and on again: then
+            // what was copied above isn't this phone's any more, and nothing is done with it.
+            guard isCurrent(registration) else { return }
             let isDue = Date.now.timeIntervalSince(registration.registeredAt) > Self.reassertInterval
             let isUnchecked = Date.now.timeIntervalSince(registration.checkedAt ?? .distantPast) > Self.checkInterval
-            guard token != registration.appleToken || isUnchecked || isDue else { return }
-            let pairing = try await relay.pair(appleToken: token, deviceID: registration.deviceID)
+            guard token != registration.appleToken || isUnchecked || isDue || hasMoved else { return }
+            let pairing = try await relay.pair(appleToken: token, deviceID: hasMoved ? nil : registration.deviceID)
+            if hasMoved || pairing.deviceId != registration.deviceID {
+                // A new one, as when the relay had lost its record: kept before anything else, so
+                // that if the app ends first, the next launch retires it.
+                let record = RelayRecord(deviceID: pairing.deviceId, relay: relay.address)
+                Self.hold(record)
+                made = record
+            }
+            guard isCurrent(registration) else { return abandon(made) }
             if pairing.endpoint != registration.endpoint || isDue {
                 try await register(pairing.endpoint, keys: keys, api: api)
                 registration.registeredAt = .now
+                guard isCurrent(registration) else { return abandon(made) }
             }
+            let replaced = registration.record
             registration.deviceID = pairing.deviceId
+            registration.relay = relay.address
             registration.endpoint = pairing.endpoint
             registration.appleToken = token
             registration.checkedAt = .now
-            // Unless they were turned off meanwhile.
-            if self.registration != nil { self.registration = registration }
+            self.registration = registration
+            if let made {
+                Self.release(made)
+                // The record it replaces is retired where it was made.
+                retire(replaced)
+            }
         } catch {
-            // Next time.
+            // Next time. A pairing made meanwhile is retired, so none is left that nothing names.
+            abandon(made)
         }
+    }
+
+    /// Whether `copy` is still the registration, after the app waited.
+    private func isCurrent(_ copy: Registration) -> Bool {
+        registration?.deviceID == copy.deviceID
     }
 
     /// Gives Instagram the push address and this phone's public key and `auth`, from your login.
@@ -198,20 +329,65 @@ final class PushNotifications: NSObject {
 
     // MARK: Leaving the relay
 
-    /// Tells the relay to forget the phones this one was, now and at each launch until it has
-    /// heard: a relay that can't be reached when you log out mustn't keep sending here.
-    private func retire(_ deviceID: String? = nil) {
-        var waiting = UserDefaults.standard.stringArray(forKey: Self.retiredKey) ?? []
-        if let deviceID { waiting.append(deviceID) }
-        UserDefaults.standard.set(waiting, forKey: Self.retiredKey)
-        guard let relay = PushRelay.configured, !waiting.isEmpty else { return }
+    /// Tells relays to forget the phones this one was, now and at each launch and return to the
+    /// app until each has answered, logged in or not: a relay that can't be reached when you log
+    /// out mustn't keep sending here. Each is told at the relay that made it, which may not be
+    /// this build's.
+    private func retire(_ record: RelayRecord? = nil) {
+        var waiting = Self.records(Self.retiredItem)
+        if let record, !waiting.contains(record) {
+            waiting.append(record)
+            Self.keep(waiting, as: Self.retiredItem)
+        }
+        // A round already under way gets to what was just added.
+        guard !waiting.isEmpty, !isRetiring else { return }
+        isRetiring = true
         Task {
-            for deviceID in waiting {
-                guard (try? await relay.unpair(deviceID: deviceID)) != nil else { continue }
-                let left = (UserDefaults.standard.stringArray(forKey: Self.retiredKey) ?? []).filter { $0 != deviceID }
-                UserDefaults.standard.set(left, forKey: Self.retiredKey)
+            defer { isRetiring = false }
+            var asked: [RelayRecord] = []
+            while let record = Self.records(Self.retiredItem).first(where: { !asked.contains($0) }) {
+                asked.append(record)
+                guard let relay = PushRelay.at(record.relay),
+                      (try? await relay.unpair(deviceID: record.deviceID)) != nil
+                else { continue }
+                Self.keep(Self.records(Self.retiredItem).filter { $0 != record }, as: Self.retiredItem)
             }
         }
+    }
+
+    /// A pairing just made, kept until it's in the registration or retired.
+    private static func hold(_ record: RelayRecord) {
+        keep(records(pendingItem) + [record], as: pendingItem)
+    }
+
+    private static func release(_ record: RelayRecord) {
+        keep(records(pendingItem).filter { $0 != record }, as: pendingItem)
+    }
+
+    /// A pairing made for nothing: retired, and no longer held.
+    private func abandon(_ record: RelayRecord?) {
+        guard let record else { return }
+        retire(record)
+        Self.release(record)
+    }
+
+    // MARK: Kept in the Keychain
+
+    private static func records(_ name: String) -> [RelayRecord] {
+        guard case .found(let data) = PushStore.read(name) else { return [] }
+        return (try? JSONDecoder().decode([RelayRecord].self, from: data)) ?? []
+    }
+
+    @discardableResult
+    private static func keep(_ records: [RelayRecord], as name: String) -> Bool {
+        PushStore.write(records.isEmpty ? nil : (try? JSONEncoder().encode(records)), name)
+    }
+
+    /// Once the Keychain has the registration, the copy an earlier build kept in UserDefaults
+    /// goes. Turned off, it goes in any case, so that it can't come back.
+    private static func keep(_ registration: Registration?) {
+        let isKept = PushStore.write(registration.flatMap { try? JSONEncoder().encode($0) }, registrationItem)
+        if isKept || registration == nil { UserDefaults.standard.removeObject(forKey: registrationKey) }
     }
 
     // MARK: This phone's address at Apple
@@ -254,7 +430,7 @@ final class PushNotifications: NSObject {
 
     enum Failure: Error {
         case noAppleToken
-        /// A reply with no conversation to go to, or no login to send it from.
+        /// A reply with no conversation it can go to.
         case noConversation
         /// A reply Instagram hadn't confirmed in time.
         case timedOut
@@ -289,18 +465,19 @@ extension PushNotifications: UNUserNotificationCenterDelegate {
         #if DEBUG
         // `xcrun simctl push` puts a push straight into Notification Centre without running the
         // extension. Debug builds do the extension's work here and show the result in its
-        // place, so the whole path after Apple can be tried in the simulator.
+        // place, so the whole path after Apple can be tried in the simulator. (What the
+        // extension did show keeps the push too, beside what it wrote.)
         if notification.request.content.userInfo[InstagramPush.envelopeKey] != nil,
+           notification.request.content.userInfo[InstagramPush.routingKey] == nil,
            let content = notification.request.content.mutableCopy() as? UNMutableNotificationContent,
            InstagramPush.rewrite(content) != nil {
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
             return completionHandler([])
         }
         #endif
-        let routing = InstagramPush.Routing(userInfo: notification.request.content.userInfo)
         Task { @MainActor in
             arrivals += 1
-            if let thread = routing?.threadID, visibleThread.contains(thread) {
+            if let thread = routing(of: notification)?.threadID, visibleThread.contains(thread) {
                 completionHandler([])
             } else {
                 completionHandler([.banner, .list, .sound])
@@ -314,16 +491,33 @@ extension PushNotifications: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let content = response.notification.request.content
-        let routing = InstagramPush.Routing(userInfo: content.userInfo)
+        let notification = response.notification
         let isTap = response.actionIdentifier == UNNotificationDefaultActionIdentifier
         let reply = response.actionIdentifier == InstagramPush.replyAction ? (response as? UNTextInputNotificationResponse)?.userText : nil
-        let conversation = content.title
         Task { @MainActor in
-            if isTap { opened = routing }
-            if let reply { await send(reply: reply, threadID: routing?.threadID, conversation: conversation) }
+            let routing = routing(of: notification)
+            if isTap, let routing, isForThisLogin(routing) { opened = routing }
+            if let reply { await answer(reply, to: routing, conversation: notification.request.content.title) }
             completionHandler()
         }
+    }
+
+    /// What a notification is about (InstagramPush.Routing). What a build before this one wrote
+    /// counts only in a notification delivered before this build took over: one delivered since
+    /// can't be that build's.
+    private func routing(of notification: UNNotification) -> InstagramPush.Routing? {
+        guard let routing = InstagramPush.Routing(notification) else { return nil }
+        if case .earlierBuild(let delivered) = routing.source {
+            guard let carriedOverAt = registration?.carriedOverAt, delivered < carriedOverAt else { return nil }
+        }
+        return routing
+    }
+
+    /// Whether a notification is for the login now: the one the app wrote it for, or for one
+    /// from a push, the one notifications were turned on from, whose keys read it.
+    private func isForThisLogin(_ routing: InstagramPush.Routing) -> Bool {
+        guard let userID = Session.shared.userID else { return false }
+        return (routing.account ?? registration?.userID) == userID
     }
 }
 
@@ -350,12 +544,23 @@ extension PushNotifications {
         ),
     ]
 
+    /// Reply on a notification. It goes only to the conversation the push or the app named, as
+    /// the notification shows it, and only from the login it's for: never to a conversation the
+    /// relay could have chosen, and never from another login.
+    private func answer(_ reply: String, to routing: InstagramPush.Routing?, conversation: String) async {
+        // Another login's, or nobody's: it isn't sent, and nothing it said is shown again.
+        if let routing, !isForThisLogin(routing) { return }
+        let threadID = routing.flatMap { $0.isAnswerable && $0.isDirect ? $0.threadID : nil }
+        await send(reply: reply, threadID: threadID, conversation: conversation)
+    }
+
     /// Sends a reply typed in a notification. iOS may have woken the app in the background for
     /// it: it keeps running until Instagram has the message. When the reply doesn't go, a
     /// notification says so, with Reply again, and a tap opens the conversation.
     func send(reply: String, threadID: String?, conversation: String) async {
         let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        // Nobody to send it from, logged out since: nothing it said is shown again either.
+        guard !text.isEmpty, Session.shared.isLoggedIn else { return }
         let notice = "unsent-\(UUID().uuidString)"
         let time = BackgroundTime("Reply") { [weak self] in
             // iOS stops the app before Instagram answered: the request stops too, as below.
@@ -364,7 +569,7 @@ extension PushNotifications {
         }
         defer { time.end() }
         do {
-            guard let threadID, Session.shared.isLoggedIn else { throw Failure.noConversation }
+            guard let threadID else { throw Failure.noConversation }
             let api = Session.shared.api
             // An app woken for a notification gets seconds, not minutes, and a weak connection
             // can take longer than that.
@@ -446,10 +651,92 @@ extension PushNotifications {
             : "Your reply may not have been sent: “\(text)”. Open the conversation to check."
         if let threadID {
             content.threadIdentifier = threadID
-            content.userInfo[InstagramPush.routingKey] = ["type": "direct_v2_text", "thread": threadID]
+            // With the login it was sent from: Reply again answers only from that one.
+            let routing = ["type": "direct_v2_text", "thread": threadID, "account": Session.shared.userID]
+            content.userInfo[InstagramPush.routingKey] = routing.compactMapValues { $0 }
             content.categoryIdentifier = InstagramPush.messageCategory
         }
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+    }
+}
+
+// MARK: - Notifications already shown
+
+extension PushNotifications {
+    /// Takes a conversation's notifications out of Notification Centre: it's open, and shows
+    /// their messages itself. `threads` are its IDs, in either of Instagram's two forms.
+    func clearDelivered(threads: Set<String>) {
+        guard !threads.isEmpty else { return }
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let shown = await center.deliveredNotifications()
+            let ids = shown.filter { threads.contains($0.request.content.threadIdentifier) }.map(\.request.identifier)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
+    }
+
+    /// Takes back the notifications that quote these messages, ones their sender unsent, once
+    /// the app has found them gone from their conversation. A notification knows its message by
+    /// the ID Instagram's push gave it (`n`): one that doesn't match is left alone.
+    func withdraw(messageIDs: Set<String>) {
+        guard !messageIDs.isEmpty else { return }
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let shown = await center.deliveredNotifications()
+            let ids = shown.filter { notification in
+                let routing = notification.request.content.userInfo[InstagramPush.routingKey] as? [String: String]
+                return routing?["message"].map(messageIDs.contains) == true
+            }.map(\.request.identifier)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
+    }
+}
+
+/// Where PushNotifications keeps the relay's records of this phone: in the Keychain beside the
+/// keys (PushKeys), and like them on this device only, readable once the phone has been
+/// unlocked since it started. The relay's name for this phone is all it asks to forget the
+/// phone, or to send its notifications to another, so it mustn't leave the phone in a backup,
+/// as UserDefaults do.
+private enum PushStore {
+    enum Read {
+        case found(Data)
+        case missing
+        /// Not now: the phone hasn't been unlocked since it started.
+        case locked
+    }
+
+    static func read(_ name: String) -> Read {
+        var query = item(name)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        switch SecItemCopyMatching(query as CFDictionary, &result) {
+        case errSecSuccess: return (result as? Data).map(Read.found) ?? .missing
+        case errSecItemNotFound: return .missing
+        default: return .locked
+        }
+    }
+
+    /// Replaces what's kept under `name`, or with nil removes it. False when the Keychain
+    /// refused, which leaves what it had.
+    @discardableResult
+    static func write(_ data: Data?, _ name: String) -> Bool {
+        let match = item(name)
+        guard let data else {
+            let status = SecItemDelete(match as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let status = SecItemUpdate(match as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard status == errSecItemNotFound else { return status == errSecSuccess }
+        var new = match
+        new[kSecValueData as String] = data
+        new[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return SecItemAdd(new as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Under the keys' service, by name: `registration`, `retired`, `pending`.
+    private static func item(_ name: String) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "UnreeledPush", kSecAttrAccount as String: name]
     }
 }
 

@@ -236,7 +236,7 @@ private struct Slide: View {
                         .onDisappear { player.pause() }
                 } else {
                     RemoteImage(media.imageURL(width: geometry.size.width * displayScale))
-                    if media.isVideo, let url = media.videoURL {
+                    if let url = videoURL {
                         Button {
                             play(url)
                         } label: {
@@ -252,8 +252,14 @@ private struct Slide: View {
             .clipped()
         }
         .onAppear {
-            if autoplaysVideo, player == nil, media.isVideo, let url = media.videoURL { play(url) }
+            if autoplaysVideo, player == nil, let url = videoURL { play(url) }
         }
+    }
+
+    /// The video, when there's one from Instagram's servers for it (MediaHosts).
+    private var videoURL: URL? {
+        guard media.isVideo, let url = media.videoURL, MediaHosts.allows(url) else { return nil }
+        return url
     }
 
     private func play(_ url: URL) {

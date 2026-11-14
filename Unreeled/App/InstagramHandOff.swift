@@ -6,13 +6,14 @@ enum InstagramHandOff {
     /// Instagram's app isn't on the phone.
     @MainActor
     static func open(threadID: String) async -> Bool {
-        let ways: [(URL, [UIApplication.OpenExternalURLOptionsKey: Any])] = [
-            // The website's link to the conversation, which Instagram's app opens directly.
-            (URL(string: "https://www.instagram.com/direct/t/\(threadID)/")!, [.universalLinksOnly: true]),
-            (URL(string: "instagram://direct-inbox")!, [:]),
-            (URL(string: "instagram://app")!, [:]),
+        let ways: [(URL?, [UIApplication.OpenExternalURLOptionsKey: Any])] = [
+            // The website's link to the conversation, which Instagram's app opens directly. The ID
+            // is Instagram's: should it ever not make a link, the inbox will do.
+            (URL(string: "https://www.instagram.com/direct/t/\(threadID)/"), [.universalLinksOnly: true]),
+            (URL(string: "instagram://direct-inbox"), [:]),
+            (URL(string: "instagram://app"), [:]),
         ]
-        for (url, options) in ways where await UIApplication.shared.open(url, options: options) {
+        for case let (url?, options) in ways where await UIApplication.shared.open(url, options: options) {
             return true
         }
         return false

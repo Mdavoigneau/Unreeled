@@ -33,6 +33,8 @@ struct LoginView: View {
 final class WebPage: NSObject {
     let webView: WKWebView
     private let onCookiesChange: (() -> Void)?
+    /// When you last tapped a link in the page (or a button that opens one in a new window).
+    private var linkTappedAt = Date.distantPast
 
     init(path: String, onCookiesChange: (() -> Void)?) {
         self.onCookiesChange = onCookiesChange
@@ -54,7 +56,16 @@ final class WebPage: NSObject {
         if onCookiesChange != nil {
             Session.dataStore.httpCookieStore.add(self)
         }
-        webView.load(URLRequest(url: URL(string: path, relativeTo: InstagramAPI.site)!))
+        webView.load(URLRequest(url: Self.page(at: path)))
+    }
+
+    /// The page at `path` on www.instagram.com. A path that would lead to another site, or to no
+    /// page at all, as one taken from a link someone shared can, opens the home page instead.
+    private static func page(at path: String) -> URL {
+        guard let url = URL(string: path, relativeTo: InstagramAPI.site)?.absoluteURL,
+              url.scheme == "https", url.host()?.lowercased() == InstagramAPI.site.host()
+        else { return InstagramAPI.site }
+        return url
     }
 
     /// Sites that open in the web view. Anything else goes to Safari.
@@ -82,10 +93,17 @@ extension WebPage: WKNavigationDelegate {
         // Embedded frames (video players, login helpers) load as the site intends.
         if let frame = action.targetFrame, !frame.isMainFrame { return .allow }
 
+        // Safari, another app or a call only right after you tapped a link: a page never sends you
+        // out of the app on its own. Right after rather than only for the link itself, because
+        // Instagram passes links to other sites through a page of its own (l.instagram.com),
+        // which then moves on to them.
+        if action.navigationType == .linkActivated { linkTappedAt = .now }
+        let tapped = Date.now.timeIntervalSince(linkTappedAt) < 10
+
         switch url.scheme?.lowercased() {
         case "http", "https":
             guard Self.staysInApp(url) else {
-                openOutside(url)
+                if tapped { openOutside(url) }
                 return .cancel
             }
             if action.targetFrame == nil {
@@ -94,10 +112,12 @@ extension WebPage: WKNavigationDelegate {
                 return .cancel
             }
             return .allow
-        case "about", "blob", "data":
-            return .allow
+        case "about":
+            // A blank page, as a new window starts with. No other page without an address: with
+            // no address bar on screen, nothing would tell it apart from one of Instagram's.
+            return url.absoluteString == "about:blank" ? .allow : .cancel
         case "mailto", "tel", "sms":
-            openOutside(url)
+            if tapped { openOutside(url) }
             return .cancel
         default:
             // instagram:// and itms-apps:// would bounce you into the official app or the App Store.
@@ -117,7 +137,8 @@ extension WebPage: WKNavigationDelegate {
 }
 
 extension WebPage: WKUIDelegate {
-    /// window.open(): stay in this view, or go to Safari for other sites.
+    /// window.open(), which WebKit allows only at a tap: stay in this view, or go to Safari for
+    /// other sites.
     func webView(
         _ webView: WKWebView,
         createWebViewWith configuration: WKWebViewConfiguration,
@@ -126,6 +147,8 @@ extension WebPage: WKUIDelegate {
     ) -> WKWebView? {
         if let url = action.request.url, ["http", "https"].contains(url.scheme?.lowercased()) {
             if Self.staysInApp(url) {
+                // Perhaps Instagram's page that passes a link on to another site: it was tapped.
+                linkTappedAt = .now
                 webView.load(action.request)
             } else {
                 openOutside(url)

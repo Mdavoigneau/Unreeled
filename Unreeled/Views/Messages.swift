@@ -388,10 +388,11 @@ final class InboxModel {
         ImageCache.shared.prefetch(Array(pictures.dropFirst(4)), decode: false)
     }
 
-    /// Photos, video covers and shared posts in the latest messages, newest first.
+    /// Photos, video covers and shared posts in the latest messages, newest first. None from a
+    /// view-once message: those are never loaded ahead.
     private static func latestPictures(of thread: DirectThread) -> [URL] {
         var pictures: [URL] = []
-        for message in (thread.slideMessages?.nodes ?? []).prefix(8) {
+        for message in (thread.slideMessages?.nodes ?? []).prefix(8) where !message.isViewOnce {
             pictures += message.attachments.filter { $0.kind != .audio }.compactMap(\.previewURL)
             if let preview = message.card?.previewImage?.url.flatMap(URL.init(string:)) { pictures.append(preview) }
         }
@@ -477,16 +478,30 @@ struct ConversationView: View {
     @Environment(Session.self) private var session
     @Environment(InboxModel.self) private var inbox
     @Environment(PushNotifications.self) private var notifications
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model: ConversationModel
     @State private var viewing: MediaItem?
     @State private var viewOnce: DirectMessage?
     @State private var recorder = VoiceRecorder()
     /// Whether you're at the end of the conversation, where new messages scroll into view.
     @State private var atBottom = true
+    /// From appearing until it goes, or until a screen opens over it.
+    @State private var isShown = false
+    /// The IDs it was opened with, which the tabs know it by (`PushNotifications.visibleThread`).
+    private let ids: Set<String>
 
     init(thread: DirectThread) {
         _model = State(initialValue: ConversationModel(thread: thread))
+        ids = Set([thread.threadId, thread.threadFbid].compactMap { $0 })
     }
+
+    /// The open tab shows it, with nothing on top of it.
+    private var isInOpenTab: Bool { !notifications.visibleThread.isDisjoint(with: ids) }
+
+    /// You're looking at it: up in the open tab, with the app in front. A conversation left in a
+    /// tab you switched away from stays alive, unseen: it neither looks for new messages then
+    /// nor marks them read.
+    private var isOnScreen: Bool { isShown && isInOpenTab && scenePhase == .active }
 
     var body: some View {
         // The field under the list rather than as an inset, so the list knows its height from
@@ -564,7 +579,11 @@ struct ConversationView: View {
             }
         }
         .fullScreenCover(item: $viewing) { MediaViewer(item: $0) }
-        .onDisappear { recorder.cancel() }
+        .onAppear { isShown = true }
+        .onDisappear {
+            isShown = false
+            recorder.cancel()
+        }
         .sheet(item: $viewOnce) { message in
             ViewOnceNote(name: firstName(of: message), isVideo: message.isVideo, threadID: model.thread.id)
         }
@@ -572,19 +591,30 @@ struct ConversationView: View {
             // Back in the inbox, its new messages and read state show.
             inbox.invalidate()
             inbox.showRead(model.thread.id)
-            await model.open(api: session.api)
+            model.open()
             // New messages arrive through the website's live connection, which the app doesn't
             // have: look again every 15 seconds while the conversation is on screen.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(15))
-                if !Task.isCancelled, UIApplication.shared.applicationState == .active {
+                if !Task.isCancelled, model.isOnScreen {
                     await model.refresh(api: session.api)
                 }
             }
         }
+        // Each time it comes into view (opened, or back from another tab, from a screen opened
+        // over it or from another app): what came meanwhile, read now that you see it.
+        .onChange(of: isOnScreen) { _, onScreen in
+            model.isOnScreen = onScreen
+            if onScreen { Task { await model.refresh(api: session.api) } }
+        }
+        // Taken to another tab by a notification you tapped: a recording under way stops, as it
+        // does when you leave the conversation.
+        .onChange(of: isInOpenTab) { _, inOpenTab in
+            if !inOpenTab { recorder.cancel() }
+        }
         // With notifications on, one arriving says there's something new right away.
         .onChange(of: notifications.arrivals) {
-            Task { await model.refresh(api: session.api) }
+            if model.isOnScreen { Task { await model.refresh(api: session.api) } }
         }
         // The inbox's row follows what's on screen, even if the inbox can't load meanwhile.
         .onChange(of: model.thread) { inbox.update(from: model.thread) }
@@ -594,7 +624,7 @@ struct ConversationView: View {
             }
         }
         // Back online: what came meanwhile, and the read receipt if it didn't go.
-        .onReconnect { await model.refresh(api: session.api) }
+        .onReconnect { if model.isOnScreen { await model.refresh(api: session.api) } }
     }
 
     /// The sender's first name, for the view-once note.
@@ -753,6 +783,8 @@ final class ConversationModel {
     private(set) var olderPagesShown = 0
     private(set) var keepInView: String?
     var error: ShownError?
+    /// You're looking at the conversation, as its view says: only then is what's new marked read.
+    var isOnScreen = false
     /// Your latest message Instagram confirmed, for the inbox's row.
     private(set) var lastDelivered: Delivered?
     private var hasCursor = false
@@ -790,9 +822,10 @@ final class ConversationModel {
         return message
     }
 
-    func open(api: InstagramAPI) async {
+    /// Counted among the conversations you open most. Its messages load as it comes into view
+    /// (`refresh`, from the view).
+    func open() {
         ChatStats.recordOpen(thread.id)
-        await refresh(api: api)
     }
 
     func refresh(api: InstagramAPI) async {
@@ -970,10 +1003,10 @@ final class ConversationModel {
         }
     }
 
-    /// Something new from someone else: mark it read, as the website does while you look at it.
-    /// If that doesn't reach Instagram, the next look tries again.
+    /// Something new from someone else: mark it read, as the website does while you look at it,
+    /// and only then. If that doesn't reach Instagram, the next look tries again.
     private func markReadIfNeeded(api: InstagramAPI) async {
-        guard thread.isUnread, let longID = thread.threadId, let last = thread.lastMessage,
+        guard isOnScreen, thread.isUnread, let longID = thread.threadId, let last = thread.lastMessage,
               let messageID = last.messageId, let timestamp = last.timestampMs,
               markedRead != messageID, markingRead != messageID
         else { return }
@@ -987,12 +1020,18 @@ final class ConversationModel {
     /// Adds the latest messages to the ones already shown, and drops pending ones Instagram now has.
     private func merge(_ latest: [DirectMessage]) {
         var byID: [String: DirectMessage] = [:]
+        let arrived = Set(latest.map(\.id))
+        // Instagram's latest messages are all there is since the oldest of them: one shown from
+        // before that's newer but no longer among them was unsent, and goes too.
+        let since = latest.compactMap(\.timestamp).min()
         // The inbox's short copies go: Instagram's full ones replace them.
-        for message in messages where !message.isPending && !message.isPreview { byID[message.id] = message }
+        for message in messages where !message.isPending && !message.isPreview {
+            if let since, let sent = message.timestamp, sent > since, !arrived.contains(message.id) { continue }
+            byID[message.id] = message
+        }
         for message in latest { byID[message.id] = message }
         // A sent message's own copy replaces it once Instagram returns it, found by Instagram's ID
         // for it or by the ID it was sent with: one whose answer was lost, shown as failed, too.
-        let arrived = Set(latest.map(\.id))
         let arrivedOffline = Set(latest.compactMap(\.offlineThreadingId))
         let stillPending = messages.filter { message in
             message.isPending && !arrived.contains(message.confirmedID ?? "")
@@ -1170,6 +1209,10 @@ private struct MessageContent: View {
             LocalMediaView(media: local)
         } else if let local = message.localAudio {
             AudioBubble(url: local.url, durationMs: local.duration * 1000, levels: local.levels, isMine: isMine)
+        } else if message.isViewOnce, !isMine || message.attachments.isEmpty {
+            // Someone else's view-once photo or video opens only in Instagram's app, even if
+            // Instagram's copy ever came with it. Yours shows here when it does, as on the website.
+            ViewOnceBubble(message: message, isMine: isMine, open: { handOff(message) }, heart: heart)
         } else if let audio = message.attachments.first(where: { $0.kind == .audio }) {
             AudioBubble(url: audio.url, durationMs: audio.playableDurationMs, levels: audio.waveform, isMine: isMine)
                 .onTapGesture(count: 2, perform: heart)
@@ -1184,8 +1227,6 @@ private struct MessageContent: View {
                     }
                 }
             }
-        } else if message.isViewOnce {
-            ViewOnceBubble(message: message, isMine: isMine, open: { handOff(message) }, heart: heart)
         } else if message.isStoryReply, let card = message.card {
             StoryReplyView(message: message, card: card, isMine: isMine, open: open, heart: heart)
         } else if let card = message.card {
@@ -1402,9 +1443,11 @@ private struct ShareCard: View {
 
     private var preview: URL? { card.previewImage?.url.flatMap(URL.init(string:)) }
 
+    /// Only a web link leads anywhere: a share's link is the sender's choice. Instagram's pages
+    /// open in the app, on www.instagram.com whatever their path (WebPage), others in Safari.
     private var destination: Destination {
-        guard let url = card.targetUrl.flatMap(URL.init(string:)) else { return .nothing }
-        guard url.host()?.hasSuffix("instagram.com") == true else { return .web(url) }
+        guard let url = URL(webLink: card.targetUrl) else { return .nothing }
+        guard url.isInstagram else { return .web(url) }
         let parts = url.pathComponents.filter { $0 != "/" }
         if let index = parts.firstIndex(where: { ["p", "reel", "reels", "tv"].contains($0) }), index + 1 < parts.count {
             return .post(code: parts[index + 1])
@@ -1637,7 +1680,11 @@ private struct AudioBubble: View {
     @State private var isPlaying = false
     @State private var position: Double = 0
 
-    private var duration: Double { max((durationMs ?? 0) / 1000, 0) }
+    /// Seconds; none when the length given isn't a number, or is endless.
+    private var duration: Double {
+        guard let durationMs, durationMs.isFinite else { return 0 }
+        return max(durationMs / 1000, 0)
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1670,9 +1717,10 @@ private struct AudioBubble: View {
         .onDisappear(perform: stop)
     }
 
-    /// The time left while playing, the length otherwise.
+    /// The time left while playing, the length otherwise. A time too long to count in seconds
+    /// reads 0:00, where turning it into a whole number would stop the app.
     private var timeLabel: String {
-        let seconds = Int((isPlaying || position > 0 ? max(duration - position, 0) : duration).rounded())
+        let seconds = Int(exactly: (isPlaying || position > 0 ? max(duration - position, 0) : duration).rounded()) ?? 0
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
@@ -1682,11 +1730,15 @@ private struct AudioBubble: View {
             isPlaying = false
             return
         }
-        guard let url else { return }
+        // A voice message being sent plays from the phone; one received only from Instagram's
+        // servers (MediaHosts).
+        guard let url, url.isFileURL || MediaHosts.allows(url) else { return }
         let player = self.player ?? AVPlayer(url: url)
         if self.player == nil {
             self.player = player
             observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { time in
+                // A time the player can't tell reads as NaN: the last one stays.
+                guard time.seconds.isFinite else { return }
                 MainActor.assumeIsolated { position = time.seconds }
             }
         }
@@ -1743,7 +1795,7 @@ private struct AnimatedMediaView: View {
         let ratio = min(max(attachment.aspectRatio ?? 1, 0.56), 1.8)
         let width: CGFloat = attachment.isSticker == true ? 140 : 200
         Group {
-            if let video = attachment.attachmentMp4Url.flatMap(URL.init(string:)) {
+            if let video = attachment.attachmentMp4Url.flatMap(URL.init(string:)), MediaHosts.allows(video) {
                 LoopingVideo(url: video)
             } else {
                 RemoteImage(attachment.previewURL)
@@ -1856,6 +1908,7 @@ private struct MediaViewer: View {
         )
         .task {
             if item.isVideo {
+                guard MediaHosts.allows(item.url) else { return }
                 let player = AVPlayer(url: item.url)
                 self.player = player
                 player.play()

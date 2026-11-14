@@ -338,9 +338,10 @@ final class CookieJar: NSObject {
         store.add(self)
     }
 
-    /// The value of one of instagram.com's cookies, or "" without one.
+    /// The value of one of the website's cookies as its pages on www.instagram.com see it, or ""
+    /// without one: never one kept for another of Instagram's hosts, which the page doesn't get.
     func value(_ name: String) async -> String {
-        await all().first { $0.name == name && Self.isInstagram($0.domain) }?.value ?? ""
+        await all().first { $0.name == name && Self.domain($0.domain, matches: "www.instagram.com") }?.value ?? ""
     }
 
     /// The Cookie header for a request to `url`, as WebKit would send it.
@@ -449,10 +450,6 @@ final class CookieJar: NSObject {
                 forget()
             }
         }
-    }
-
-    private static func isInstagram(_ domain: String) -> Bool {
-        domain == "instagram.com" || domain.hasSuffix(".instagram.com")
     }
 
     /// RFC 6265: a cookie with a domain (".instagram.com") goes to that host and those under it;

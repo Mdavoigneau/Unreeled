@@ -16,6 +16,10 @@ final class StoriesModel {
     var presented: Presentation?
     /// Reels loaded with their items, by owner ID.
     private var loaded: [String: Reel] = [:]
+    /// Loaded reels taken from what the phone saved, not from Instagram since launch: the viewer
+    /// asks Instagram for one as it shows it, as the website does, and Instagram's answer
+    /// replaces it.
+    private var fromPhone: Set<String> = []
     /// When the newest item you saw in each reel was posted, as you watch.
     private var seenUpTo: [String: Double] = [:]
 
@@ -60,17 +64,21 @@ final class StoriesModel {
         Task {
             defer { isPrefetching = false }
             let saved = await Task.detached(priority: .userInitiated) { StoryFiles.shared.savedReels(ids: ids) }.value
-            let current = saved.filter { reel in
-                loaded[reel.id] == nil && (reel.items?.elements.compactMap(\.takenAt).max() ?? 0) >= (newest[reel.id] ?? .infinity)
+            // Without the items whose day is over; one with none left isn't used.
+            let current = saved.compactMap(Self.current).filter { reel in
+                loadedReel(reel.id) == nil && (reel.items?.elements.compactMap(\.takenAt).max() ?? 0) >= (newest[reel.id] ?? .infinity)
             }
-            for reel in current { loaded[reel.id] = reel }
+            for reel in current {
+                loaded[reel.id] = reel
+                fromPhone.insert(reel.id)
+            }
             queueFiles(of: current)
             decodeOpeningPicture(of: ids)
 
-            let missing = ids.prefix(Self.accountsAhead).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+            let missing = ids.prefix(Self.accountsAhead).filter { loadedReel($0) == nil && !reelsLoading.contains($0) }
             for (number, start) in stride(from: 0, to: missing.count, by: 3).enumerated() {
                 if number > 0 { try? await Task.sleep(for: .seconds(1)) }
-                let batch = Array(missing.dropFirst(start).prefix(3)).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+                let batch = Array(missing.dropFirst(start).prefix(3)).filter { loadedReel($0) == nil && !reelsLoading.contains($0) }
                 guard !batch.isEmpty else { continue }
                 guard (try? await load(batch, api: api)) != nil else { return }
                 if number == 0 { decodeOpeningPicture(of: ids) }
@@ -80,19 +88,24 @@ final class StoriesModel {
 
     /// The picture the first account with something new opens on, decoded ahead.
     private func decodeOpeningPicture(of ids: [String]) {
-        guard let first = ids.first, let reel = loaded[first],
+        guard let first = ids.first, let reel = loadedReel(first),
               let url = startItem(of: reel)?.imageURL(width: StoryViewer.imageWidth)
         else { return }
         Task { _ = await ImageCache.shared.image(for: url, store: .stories) }
     }
 
     /// Loads these reels with their items, and queues their photos and videos for the phone.
+    /// Instagram's answer replaces what was loaded or saved before, so what the owner took down
+    /// since goes, and an account that has nothing up any more has nothing loaded.
     @discardableResult
     private func load(_ ids: [String], api: InstagramAPI) async throws -> [Reel] {
         reelsLoading.formUnion(ids)
         defer { reelsLoading.subtract(ids) }
         let reels = try await api.stories(userIDs: ids)
-        for reel in reels where loaded[reel.id] == nil { loaded[reel.id] = reel }
+        let answered = Set(reels.map(\.id))
+        for id in ids where !answered.contains(id) { loaded[id] = nil }
+        for reel in reels { loaded[reel.id] = reel }
+        fromPhone.subtract(ids)
         queueFiles(of: reels)
         return reels
     }
@@ -100,9 +113,18 @@ final class StoriesModel {
     /// The viewer reached `index`: the batch after it loads now, if it hasn't yet.
     func loadAhead(from index: Int, of ids: [String], api: InstagramAPI) {
         guard ids.indices.contains(index) else { return }
-        let batch = ids[index...].prefix(3).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+        let batch = ids[index...].prefix(3).filter { loadedReel($0) == nil && !reelsLoading.contains($0) }
         guard !batch.isEmpty else { return }
         Task { try? await load(Array(batch), api: api) }
+    }
+
+    /// The reel without the items whose day is over (a story lasts 24 hours from when it was
+    /// posted), or nil when none is left: for a reel loaded a while ago, or saved on the phone.
+    private static func current(_ reel: Reel) -> Reel? {
+        let dayAgo = Date().timeIntervalSince1970 - 86_400
+        var reel = reel
+        reel.items?.elements.removeAll { ($0.takenAt ?? 0) <= dayAgo }
+        return reel.items?.elements.isEmpty == false ? reel : nil
     }
 
     /// The item a reel opens on: the first you haven't seen.
@@ -144,10 +166,12 @@ final class StoriesModel {
     private func runDownloads() {
         guard !isDownloading else { return }
         isDownloading = true
+        let account = SavedCopies.account
         Task {
             defer { isDownloading = false }
             var budget = StoryFiles.aheadBudget - (await Task.detached(priority: .utility) { StoryFiles.shared.bytes }.value)
-            while !downloads.isEmpty {
+            // What's queued was for the login it began in: it stops when that login ends.
+            while !downloads.isEmpty, SavedCopies.account == account {
                 let url = downloads.removeFirst()
                 let isUrgent = urgent.remove(url) != nil
                 guard StoryFiles.shared.file(for: url) == nil, isUrgent || budget > 0 else { continue }
@@ -186,8 +210,19 @@ final class StoriesModel {
         return latestStory > max(seenUpTo[id] ?? 0, loaded[id]?.seen ?? 0) ? .unseen : .seen
     }
 
-    /// A reel already loaded, if it is.
-    func loadedReel(_ id: String) -> Reel? { loaded[id] }
+    /// A reel already loaded, if it is, without the items whose day is over.
+    func loadedReel(_ id: String) -> Reel? { loaded[id].flatMap(Self.current) }
+
+    /// The loaded reel came from what the phone saved, not from Instagram since launch.
+    func isFromPhone(_ id: String) -> Bool { fromPhone.contains(id) }
+
+    /// Instagram's copy of a reel that came from what the phone saved: nil when the account has
+    /// nothing up any more.
+    func refreshFromPhone(_ id: String, api: InstagramAPI) async throws -> Reel? {
+        guard fromPhone.contains(id), !reelsLoading.contains(id) else { return loadedReel(id) }
+        try await load([id], api: api)
+        return loadedReel(id)
+    }
 
     /// A reel with its items, loading it along with the next couple, as the website does. Nil when
     /// the account has nothing up any more (expired, or just deleted).
@@ -199,11 +234,11 @@ final class StoriesModel {
             try await Task.sleep(for: .milliseconds(100))
             waited += 1
         }
-        if let reel = loaded[id] { return reel }
-        let batch = ids[index...].prefix(3).filter { loaded[$0] == nil && !reelsLoading.contains($0) }
+        if let reel = loadedReel(id) { return reel }
+        let batch = ids[index...].prefix(3).filter { loadedReel($0) == nil && !reelsLoading.contains($0) }
         try await load(Array(batch.isEmpty ? [id] : batch), api: api)
-        if loaded[id] == nil { tray.removeAll { $0.id == id } }
-        return loaded[id]
+        if loadedReel(id) == nil { tray.removeAll { $0.id == id } }
+        return loadedReel(id)
     }
 
     /// Marks an item seen once, like the website does about a second after showing it.
@@ -892,8 +927,18 @@ struct StoryViewer: View {
 
     private func loadReel() async {
         error = nil
-        if let loaded = stories.loadedReel(presentation.reelIDs[reelIndex]) {
+        let id = presentation.reelIDs[reelIndex]
+        if let loaded = stories.loadedReel(id) {
             show(loaded)
+            // Saved on the phone: Instagram's copy takes its place as soon as it comes.
+            guard stories.isFromPhone(id) else { return }
+            do {
+                let fresh = try await stories.refreshFromPhone(id, api: session.api)
+                guard !Task.isCancelled else { return }
+                replace(with: fresh)
+            } catch {
+                // Not now: the saved copy stays.
+            }
             return
         }
         reel = nil
@@ -918,6 +963,20 @@ struct StoryViewer: View {
         reel = loaded
     }
 
+    /// Instagram's copy in place of the saved one on screen: the item on screen stays if it's
+    /// still up, and what the owner took down since goes. Nothing left up: on to the next account.
+    private func replace(with fresh: Reel?) {
+        guard let fresh, let items = fresh.items?.elements, !items.isEmpty else { return nextReel() }
+        let shown = item?.id
+        reel = fresh
+        if let shown, let index = items.firstIndex(where: { $0.id == shown }) {
+            itemIndex = index
+        } else {
+            itemIndex = min(itemIndex, items.count - 1)
+            restarts += 1
+        }
+    }
+
     /// Shows the current item once it's ready, for as long as it lasts, then moves on. The bar
     /// doesn't move while a photo is loading or a video is buffering.
     private func play() async {
@@ -931,9 +990,11 @@ struct StoryViewer: View {
         }
         prepareNext()
 
-        if item.isVideo, let url = item.videoURL {
-            // From the phone when it was loaded ahead, which starts at once; streamed otherwise.
-            let player = AVPlayer(url: StoryFiles.shared.file(for: url) ?? url)
+        if item.isVideo, let url = item.videoURL,
+           let source = StoryFiles.shared.file(for: url) ?? (MediaHosts.allows(url) ? url : nil) {
+            // From the phone when it was loaded ahead, which starts at once; streamed otherwise,
+            // from Instagram's servers only. A video from anywhere else shows as its cover.
+            let player = AVPlayer(url: source)
             playing = PlayingVideo(itemID: item.id, player: player)
             clock.start(duration: item.videoDuration ?? 15, player: player)
             if !isPaused { player.play() }

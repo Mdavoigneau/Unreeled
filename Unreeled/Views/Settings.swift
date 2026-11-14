@@ -57,7 +57,7 @@ struct SettingsView: View {
                 Task { await session.logOut() }
             }
         } message: {
-            Text("What the app saved on this phone is deleted: screens, conversations and pictures.")
+            Text("Instagram is asked to end this login, and what the app saved on this phone is deleted: screens, conversations, pictures and the voice messages you recorded.")
         }
     }
 }

@@ -196,9 +196,9 @@ struct Profile: Decodable, Hashable {
     var id: String { pk?.value ?? rawID?.value ?? "" }
     var hasStory: Bool { (latestReelMedia ?? 0) > Date().timeIntervalSince1970 - 86_400 }
     var avatarURL: URL? { (hdProfilePicUrlInfo?.url ?? profilePicUrl).flatMap(URL.init(string:)) }
+    /// The website on the profile, only when it's a web link (see `URL(webLink:)`).
     var websiteURL: URL? {
-        guard let link = [externalUrl, bioLinks?.first?.url].compactMap({ $0 }).first(where: { !$0.isEmpty }) else { return nil }
-        return URL(string: link)
+        [externalUrl, bioLinks?.first?.url].lazy.compactMap(URL.init(webLink:)).first
     }
     /// Private, and you don't follow them (and it isn't you): their posts can't be loaded.
     func isLocked(for viewerID: String?) -> Bool {
@@ -451,8 +451,11 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             func string(_ key: CodingKeys) -> String? { try? container.decodeIfPresent(String.self, forKey: key) }
+            // A number, or one written as a string. Nil unless it's a size or a length something
+            // could have: a string can read as "nan" or "inf", and a view can't draw from those.
             func number(_ key: CodingKeys) -> Double? {
-                (try? container.decodeIfPresent(Double.self, forKey: key)) ?? string(key).flatMap(Double.init)
+                let value = (try? container.decodeIfPresent(Double.self, forKey: key)) ?? string(key).flatMap(Double.init)
+                return value.flatMap { (0...1e9).contains($0) ? $0 : nil }
             }
             attachmentCdnUrl = string(.attachmentCdnUrl)
             attachmentCdnFallbackUrl = string(.attachmentCdnFallbackUrl)
@@ -464,15 +467,25 @@ struct DirectMessage: Decodable, Hashable, Identifiable {
             attachmentWebpUrl = string(.attachmentWebpUrl)
             isSticker = try? container.decodeIfPresent(Bool.self, forKey: .isSticker)
             // A list of levels, an object holding one, or either as a JSON string.
-            if let levels = try? container.decodeIfPresent([Double].self, forKey: .waveformData) {
-                waveform = levels
+            var levels: [Double]?
+            if let list = try? container.decodeIfPresent([Double].self, forKey: .waveformData) {
+                levels = list
             } else if let object = try? container.decodeIfPresent(Waveform.self, forKey: .waveformData) {
-                waveform = object.amplitudes
+                levels = object.amplitudes
             } else if let text = string(.waveformData), let data = text.data(using: .utf8) {
-                waveform = (try? JSONDecoder().decode([Double].self, from: data))
+                levels = (try? JSONDecoder().decode([Double].self, from: data))
                     ?? (try? JSONDecoder().decode(Waveform.self, from: data))?.amplitudes
-            } else {
-                waveform = nil
+            }
+            waveform = Self.bounded(levels)
+        }
+
+        /// At most 1,024 levels, each the loudest of those it stands for: the bubble draws 32 bars
+        /// from them at every redraw, and a list of any length would make that slow.
+        private static func bounded(_ levels: [Double]?) -> [Double]? {
+            let most = 1024
+            guard let levels, levels.count > most else { return levels }
+            return (0..<most).map { index in
+                levels[index * levels.count / most..<(index + 1) * levels.count / most].max() ?? 0
             }
         }
 
@@ -873,3 +886,22 @@ extension Lossy: Encodable where Element: Encodable {
 
 extension Lossy: Equatable where Element: Equatable {}
 extension Lossy: Hashable where Element: Hashable {}
+
+extension URL {
+    /// A link someone chose (in a share, as their website), only when it's a web page: http or
+    /// https, with a host. Any other kind would have iOS open another app, a call or a message
+    /// at a tap, without asking.
+    init?(webLink text: String?) {
+        guard let text, let url = URL(string: text), ["http", "https"].contains(url.scheme?.lowercased()),
+              url.host()?.isEmpty == false
+        else { return nil }
+        self = url
+    }
+
+    /// On instagram.com or one of its subdomains, in any case. A look-alike such as
+    /// notinstagram.com isn't.
+    var isInstagram: Bool {
+        guard let host = host()?.lowercased() else { return false }
+        return host == "instagram.com" || host.hasSuffix(".instagram.com")
+    }
+}

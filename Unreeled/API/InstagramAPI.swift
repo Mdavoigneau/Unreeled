@@ -304,15 +304,15 @@ final class InstagramAPI {
         }
     }
 
-    /// Sends the query with the parameters and headers the website uses. The string "{viewer}" in
-    /// the variables becomes the account's ID as the website knows it.
+    /// Sends the query with the parameters and headers the website uses. An "actor_id" of
+    /// "{viewer}" in the variables becomes the account's ID as the website knows it.
     private func graphQLAttempt(_ name: String, _ variables: [String: Any], freshTokens: Bool) async throws -> [String: Any] {
         guard let query = WebQuery.all[name] else { throw Failure.unreadable("unknown query \(name)") }
-        let variables = variables.merging(query.providers.mapValues(\.value)) { current, _ in current }
-        let json = try JSONSerialization.data(withJSONObject: variables, options: [.withoutEscapingSlashes])
         let site = try await siteValues(fresh: freshTokens)
+        let variables = Self.settingViewer(site.av, in: variables.merging(query.providers.mapValues(\.value)) { current, _ in current })
+        let json = try JSONSerialization.data(withJSONObject: variables, options: [.withoutEscapingSlashes])
         let identity = await BrowserIdentity.current()
-        let text = String(decoding: json, as: UTF8.self).replacingOccurrences(of: #""{viewer}""#, with: #""\#(site.av)""#)
+        let text = String(decoding: json, as: UTF8.self)
         let parameters = [("av", site.av)] + pageParameters(site, dpr: identity.pixelRatio) + [
             ("fb_api_caller_class", "RelayModern"), ("fb_api_req_friendly_name", name), ("variables", text),
             ("server_timestamps", "true"), ("doc_id", query.docID),
@@ -335,7 +335,26 @@ final class InstagramAPI {
             body: Data(WebRequests.form(parameters.filter { !$0.1.isEmpty }).utf8),
             purpose: name.contains("Mutation") ? .write : .read
         )
-        return try await Self.parsed(name, status: response.status, data: response.data)
+        do {
+            return try await Self.parsed(name, status: response.status, data: response.data)
+        } catch Failure.loginRequired {
+            // As in check(status:data:): Session decides whether the login has really ended.
+            Session.shared.loginMayHaveEnded()
+            throw Failure.loginRequired
+        }
+    }
+
+    /// The variables with the account's ID in each "actor_id" that asks for it. Only there, so
+    /// text someone typed that happens to read "{viewer}" goes out as typed.
+    private nonisolated static func settingViewer(_ id: String, in node: Any) -> Any {
+        if var object = node as? [String: Any] {
+            for (key, value) in object {
+                object[key] = key == "actor_id" && value as? String == "{viewer}" ? id : settingViewer(id, in: value)
+            }
+            return object
+        }
+        if let array = node as? [Any] { return array.map { settingViewer(id, in: $0) } }
+        return node
     }
 
     @concurrent
@@ -347,8 +366,11 @@ final class InstagramAPI {
     private nonisolated static func data(of name: String, status: Int, body: String) throws -> [String: Any] {
         var text = Substring(body)
         if text.hasPrefix("for (;;);") { text = text.dropFirst("for (;;);".count) }
-        let parts = text.split(whereSeparator: \.isNewline).compactMap {
-            (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        // One JSON document a line. Split at line feeds only: one can't be inside a JSON string,
+        // while other line breaks (U+2028, U+2029, U+0085) can, in someone's message, and mustn't
+        // cut a document in two. A carriage return left at the end of a line is whitespace to JSON.
+        let parts = text.utf8.split(separator: UInt8(ascii: "\n")).compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0))) as? [String: Any]
         }
         guard let first = parts.first else {
             if status == 401 || text.hasPrefix("<") { throw Failure.loginRequired }
@@ -390,7 +412,7 @@ final class InstagramAPI {
         }
         let rest = path.dropFirst()
         if var array = node as? [Any], let index = key as? Int {
-            if index < array.count {
+            if array.indices.contains(index) {
                 array[index] = merge(piece, at: rest, into: array[index])
             } else if index == array.count {
                 array.append(merge(piece, at: rest, into: [String: Any]()))
@@ -565,6 +587,9 @@ final class InstagramAPI {
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let message = json?["message"] as? String
         if status == 401 || json?["require_login"] as? Bool == true || message == "login_required" {
+            // Perhaps the login has ended at Instagram: Session finds out, without taking this
+            // answer's word for it.
+            Session.shared.loginMayHaveEnded()
             throw Failure.loginRequired
         }
         if json?["checkpoint_url"] is String || message == "checkpoint_required" || message == "challenge_required" {
@@ -577,6 +602,7 @@ final class InstagramAPI {
             throw Failure.http(status: status, message: message)
         }
         if json == nil, data.first == UInt8(ascii: "<") {
+            Session.shared.loginMayHaveEnded()
             throw Failure.loginRequired
         }
     }

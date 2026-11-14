@@ -2,11 +2,27 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Whose saved copies the app reads and keeps: the account logged in, which Session sets as the
+/// login changes, and nil while there's none, when nothing is read or kept. Each account's copies
+/// are files of their own (see ResponseCache), so one account's never show for another, even in
+/// the moment before they're deleted.
+enum SavedCopies {
+    private static let lock = NSLock()
+    private static var current: String?
+
+    static var account: String? {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
+}
+
 /// Instagram's responses kept on the phone, so screens show at once and refresh behind. It cleans
 /// itself: anything unused for two weeks goes, and past 100 entries or 40 MB the least recently
-/// used go first. Conversations are kept apart, so visiting profiles never pushes them out: the
-/// 60 you opened last, for a month. So are your own profile and your activity (keys starting
-/// with `kept-`), a few hundred kilobytes, which stay until you log out. Logging out empties it.
+/// used go first, and so does anything Instagram hasn't sent again for a month. Conversations are
+/// kept apart, so visiting profiles never pushes them out: the 60 you opened last, for a month.
+/// So are your own profile and your activity (keys starting with `kept-`), a few hundred
+/// kilobytes, which stay until you log out. Each account has its own copies, and the end of a
+/// login empties it.
 final class ResponseCache: @unchecked Sendable {
     static let shared = ResponseCache()
 
@@ -15,24 +31,35 @@ final class ResponseCache: @unchecked Sendable {
     private static let maxBytes = 40 << 20
     private static let conversationMaxAge: TimeInterval = 30 * 86_400
     private static let maxConversations = 60
+    /// A copy Instagram hasn't sent again for this long goes, however often it's read: a profile
+    /// that no longer loads, a conversation you've left.
+    private static let maxUnconfirmed: TimeInterval = 30 * 86_400
 
-    private let folder = URL.cachesDirectory.appending(path: "Responses", directoryHint: .isDirectory)
+    private let folder = URL.cachesDirectory.appending(path: "Copies", directoryHint: .isDirectory)
     private let queue = DispatchQueue(label: "Unreeled.ResponseCache", qos: .utility)
 
     private init() {
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        CacheFolder.create(folder)
+        // Copies from before each account had files of its own, named after their keys alone:
+        // they go, once. Screens fill again from Instagram.
+        let earlier = URL.cachesDirectory.appending(path: "Responses", directoryHint: .isDirectory)
+        queue.async { try? FileManager.default.removeItem(at: earlier) }
     }
 
-    /// The saved response, marked as just used. Small files: read right away.
+    /// The saved response of the account logged in, marked as just used. Small files: read right away.
     func data(for key: String) -> Data? {
-        let url = file(for: key)
+        guard let account = SavedCopies.account else { return nil }
+        let url = file(for: key, account: account)
         guard let data = try? Data(contentsOf: url) else { return nil }
         queue.async { try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path) }
         return data
     }
 
-    func store(_ data: Data, for key: String) {
-        let url = file(for: key)
+    /// Keeps a response for `account`, the one logged in when it was asked for. Once that login
+    /// has ended or changed, an answer still on its way isn't kept.
+    func store(_ data: Data, for key: String, account: String?) {
+        guard let account, account == SavedCopies.account else { return }
+        let url = file(for: key, account: account)
         queue.async {
             try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         }
@@ -47,21 +74,34 @@ final class ResponseCache: @unchecked Sendable {
         }
     }
 
-    /// Drops what's old, then the least recently used past the limits.
+    /// Drops what's old, or hasn't come from Instagram again for a month, then the least recently
+    /// used past the limits.
     func clean() {
         let folder = folder
         queue.async {
-            let all = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: CacheFolder.keys)) ?? []
-            let files = all.filter { !$0.lastPathComponent.hasPrefix("kept-") }
+            let all = (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: CacheFolder.keys + [.creationDateKey]
+            )) ?? []
+            // Each write makes a new file, so its creation date is when Instagram last sent it.
+            let files = all.filter { file in
+                guard !file.lastPathComponent.hasPrefix("kept-") else { return false }
+                let written = (try? file.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+                guard Date.now.timeIntervalSince(written) > Self.maxUnconfirmed else { return true }
+                try? FileManager.default.removeItem(at: file)
+                return false
+            }
             let isConversation = { (file: URL) in file.lastPathComponent.hasPrefix("thread-") }
             CacheFolder.prune(files.filter(isConversation), maxAge: Self.conversationMaxAge, maxEntries: Self.maxConversations)
             CacheFolder.prune(files.filter { !isConversation($0) }, maxAge: Self.maxAge, maxEntries: Self.maxEntries, maxBytes: Self.maxBytes)
         }
     }
 
-    private func file(for key: String) -> URL {
-        let name = String(key.map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "_" })
-        return folder.appending(path: name + ".json")
+    /// The file of a key's copy for an account: a hash of both, so two keys never share a file
+    /// (the usernames a.b and a_b once did), nor two accounts. What kind of copy it is stays in
+    /// front, for `clean`.
+    private func file(for key: String, account: String) -> URL {
+        let kind = ["kept-", "thread-"].first { key.hasPrefix($0) } ?? ""
+        return folder.appending(path: kind + CacheFolder.name(for: account + "\n" + key) + ".json")
     }
 }
 
@@ -71,36 +111,44 @@ final class ResponseCache: @unchecked Sendable {
 /// a different link each time. Files go by what stays the same: the picture's path on the CDN and
 /// the size asked for (`stp`). Kept light: anything unused for two weeks goes, then the least
 /// recently used past 100 MB, at every launch and whenever the app leaves the screen. Logging out
-/// empties it.
+/// empties it. Pictures come only from Instagram's servers for them (MediaHosts), 16 MB at most.
 final class ImageFiles: @unchecked Sendable {
     static let shared = ImageFiles()
 
     private static let maxAge: TimeInterval = 14 * 86_400
     private static let maxBytes = 100 << 20
+    /// Far more than any picture Instagram sends.
+    private static let maxFileBytes = 16 << 20
 
     private let folder = URL.cachesDirectory.appending(path: "Images", directoryHint: .isDirectory)
     private let queue = DispatchQueue(label: "Unreeled.ImageFiles", qos: .utility)
+    private let lock = NSLock()
+    /// Goes up when everything is deleted, so a download from before isn't kept after.
+    private var generation = 0
 
     /// Not through URLCache, which would keep a copy under each new link.
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: MediaRedirects(), delegateQueue: nil)
     }()
 
     private init() {
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        CacheFolder.create(folder)
     }
 
     /// What identifies the picture: on Instagram's and Facebook's CDNs, the file's path and its
-    /// size, whichever server and signature the link has. Any other link counts as a whole.
+    /// size, whichever server and signature the link has, and for a picture they pass on from
+    /// another site (a link's preview), that picture's own address. Any other link counts as a whole.
     static func key(for url: URL) -> String {
         guard let host = url.host(), host.hasSuffix(".fbcdn.net") || host.hasSuffix(".cdninstagram.com"),
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else { return url.absoluteString }
-        let size = components.queryItems?.first { $0.name == "stp" }?.value ?? ""
-        return components.path + "?stp=" + size
+        let items = components.queryItems ?? []
+        let size = items.first { $0.name == "stp" }?.value ?? ""
+        let source = items.first { $0.name == "url" }?.value
+        return components.path + "?stp=" + size + (source.map { "&url=" + $0 } ?? "")
     }
 
     /// The picture's bytes: the file on the phone, or downloaded and kept when `download` allows.
@@ -110,11 +158,23 @@ final class ImageFiles: @unchecked Sendable {
             queue.async { try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path) }
             return data
         }
-        guard download, let (data, response) = try? await session.data(from: url),
-              let http = response as? HTTPURLResponse, http.statusCode == 200,
-              http.mimeType?.hasPrefix("image/") == true, !data.isEmpty
-        else { return nil }
-        queue.async { try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
+        guard download, MediaHosts.allows(url) else { return nil }
+        let started = lock.withLock { generation }
+        var received = Data()
+        do {
+            try await MediaHosts.download(url, session: session, limit: Self.maxFileBytes) { http in
+                http.statusCode == 200 && http.mimeType?.hasPrefix("image/") == true
+            } take: { received.append($0) }
+        } catch {
+            return nil
+        }
+        let data = received
+        guard !data.isEmpty else { return nil }
+        queue.async {
+            // Not when everything was deleted meanwhile, as when logging out.
+            guard self.lock.withLock({ self.generation }) == started else { return }
+            try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
         return data
     }
 
@@ -129,6 +189,7 @@ final class ImageFiles: @unchecked Sendable {
     }
 
     func removeAll() {
+        lock.withLock { generation += 1 }
         let folder = folder
         queue.async {
             for file in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
@@ -154,12 +215,15 @@ final class ImageFiles: @unchecked Sendable {
 /// Story photos and videos as files, loaded ahead so stories open and play at once. Stories last a
 /// day, so their files go a day after they were saved, and past 60 MB the least recently watched
 /// go first: at every launch, whenever the app leaves the screen and when the viewer closes.
-/// Logging out empties it.
+/// Logging out empties it. Files come only from Instagram's servers for them (MediaHosts), 50 MB
+/// at most; a video too large for that plays as it streams.
 final class StoryFiles: @unchecked Sendable {
     static let shared = StoryFiles()
 
     private static let maxAge: TimeInterval = 86_400
     private static let maxBytes = 60 << 20
+    /// Far more than any story Instagram sends.
+    private static let maxFileBytes = 50 << 20
     /// Loading ahead stops here; what you're about to watch still loads.
     static let aheadBudget = 30 << 20
 
@@ -167,17 +231,19 @@ final class StoryFiles: @unchecked Sendable {
     private let queue = DispatchQueue(label: "Unreeled.StoryFiles", qos: .utility)
     private let lock = NSLock()
     private var downloads: [String: Task<URL?, Never>] = [:]
+    /// Goes up when everything is deleted, so a download from before isn't kept after.
+    private var generation = 0
 
     /// Not through URLCache, which would keep a second copy.
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: MediaRedirects(), delegateQueue: nil)
     }()
 
     private init() {
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        CacheFolder.create(folder)
     }
 
     /// The photo's or video's file, when it's on the phone.
@@ -191,18 +257,35 @@ final class StoryFiles: @unchecked Sendable {
     /// Downloads a photo or video onto the phone, once even when asked twice, and returns its file.
     func download(_ url: URL) async -> URL? {
         if let file = file(for: url) { return file }
+        guard MediaHosts.allows(url) else { return nil }
         let key = ImageFiles.key(for: url)
         let destination = path(for: url)
         let session = session
         let task = lock.withLock { () -> Task<URL?, Never> in
             if let running = downloads[key] { return running }
+            let started = generation
             let task = Task.detached(priority: .utility) { () -> URL? in
-                guard let (temporary, response) = try? await session.download(from: url),
-                      let http = response as? HTTPURLResponse, http.statusCode == 200
+                let temporary = URL.temporaryDirectory.appending(path: "story-\(UUID().uuidString)")
+                // Whatever happens, nothing is left behind but the file in its place.
+                defer { try? FileManager.default.removeItem(at: temporary) }
+                guard FileManager.default.createFile(atPath: temporary.path, contents: nil),
+                      let handle = try? FileHandle(forWritingTo: temporary)
                 else { return nil }
-                try? FileManager.default.removeItem(at: destination)
-                guard (try? FileManager.default.moveItem(at: temporary, to: destination)) != nil else { return nil }
-                return destination
+                do {
+                    defer { try? handle.close() }
+                    try await MediaHosts.download(url, session: session, limit: StoryFiles.maxFileBytes) { http in
+                        http.statusCode == 200 && ["image/", "video/"].contains { http.mimeType?.hasPrefix($0) == true }
+                    } take: { try handle.write(contentsOf: $0) }
+                } catch {
+                    return nil
+                }
+                // Not when everything was deleted meanwhile, as when logging out.
+                return self.lock.withLock { () -> URL? in
+                    guard self.generation == started else { return nil }
+                    try? FileManager.default.removeItem(at: destination)
+                    guard (try? FileManager.default.moveItem(at: temporary, to: destination)) != nil else { return nil }
+                    return destination
+                }
             }
             downloads[key] = task
             return task
@@ -225,25 +308,36 @@ final class StoryFiles: @unchecked Sendable {
         queue.async { try? FileManager.default.removeItem(at: file) }
     }
 
-    /// Each account's stories as Instagram sent them, so the next launch doesn't ask again for
-    /// the ones with nothing new. Here, they go after a day like the rest.
-    func saveReels(from data: Data) {
+    /// Each account's stories as Instagram sent them to `account`, the one logged in when they
+    /// were asked for, so the next launch doesn't ask again for the ones with nothing new. Here,
+    /// they go after a day like the rest. Once that login has ended or changed, they aren't kept.
+    func saveReels(from data: Data, account: String?) {
+        guard let account else { return }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         for reel in json?["reels_media"] as? [[String: Any]] ?? [] {
             let id = reel["id"] ?? (reel["user"] as? [String: Any])?["pk"]
             guard let id = id.map({ "\($0)" }), id.allSatisfy(\.isNumber),
                   let one = try? JSONSerialization.data(withJSONObject: reel)
             else { continue }
-            try? one.write(to: folder.appending(path: "reel-\(id).json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            guard account == SavedCopies.account else { return }
+            try? one.write(to: reelFile(id, account: account), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         }
     }
 
-    /// The saved stories of these accounts, those still here.
+    /// The saved stories of these accounts, those still here, as Instagram sent them to the
+    /// account logged in.
     func savedReels(ids: [String]) -> [Reel] {
-        ids.compactMap { id in
-            guard let data = try? Data(contentsOf: folder.appending(path: "reel-\(id).json")) else { return nil }
+        guard let account = SavedCopies.account else { return [] }
+        return ids.compactMap { id in
+            guard let data = try? Data(contentsOf: reelFile(id, account: account)) else { return nil }
             return try? InstagramAPI.decodeSaved(Reel.self, from: data)
         }
+    }
+
+    /// Who sees which stories depends on the account (Close Friends): each account's saved
+    /// stories are files of their own, as in ResponseCache.
+    private func reelFile(_ id: String, account: String) -> URL {
+        folder.appending(path: "reel-" + CacheFolder.name(for: account + "\n" + id) + ".json")
     }
 
     /// What the folder holds, for the budget of loading ahead.
@@ -253,6 +347,7 @@ final class StoryFiles: @unchecked Sendable {
     }
 
     func removeAll() {
+        lock.withLock { generation += 1 }
         let folder = folder
         queue.async {
             for file in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
@@ -296,6 +391,16 @@ private enum CacheFolder {
     /// A file name for a key: the start of its SHA-256.
     static func name(for key: String) -> String {
         SHA256.hash(data: Data(key.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Makes the folder, and says it's never to go into the phone's backups. iOS leaves the
+    /// caches folder out already; this keeps it so wherever the folder is.
+    static func create(_ folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var folder = folder
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
     }
 
     /// Deletes what's older than `maxAge`, then the least recently used past `maxEntries` or `maxBytes`.
@@ -356,9 +461,11 @@ enum ThreadStore {
         return threads
     }
 
-    /// The conversation as Instagram just returned it, for next time.
-    static func save(_ data: Data, thread: DirectThread, id: String) {
-        ResponseCache.shared.store(data, for: key(id))
+    /// The conversation as Instagram just returned it to `account`, the one logged in when it was
+    /// asked for, for next time. Once that login has ended or changed, it isn't kept.
+    static func save(_ data: Data, thread: DirectThread, id: String, account: String?) {
+        guard let account, account == SavedCopies.account else { return }
+        ResponseCache.shared.store(data, for: key(id), account: account)
         remember(thread, id: id)
     }
 
@@ -419,16 +526,32 @@ enum SecureStore {
         return result as? Data
     }
 
-    static func set(_ data: Data?, for account: String) {
+    /// Whether the item is there: nil when the Keychain can't tell right now, as on a phone that
+    /// hasn't been unlocked since it started.
+    static func contains(_ account: String) -> Bool? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        switch SecItemCopyMatching(query as CFDictionary, nil) {
+        case errSecSuccess: return true
+        case errSecItemNotFound: return false
+        default: return nil
+        }
+    }
+
+    /// True once the Keychain has it (or, for nil, has nothing for `account`).
+    @discardableResult
+    static func set(_ data: Data?, for account: String) -> Bool {
         let match: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(match as CFDictionary)
-        guard let data else { return }
+        guard let data else { return true }
         var item = match
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(item as CFDictionary, nil)
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
     }
 }
