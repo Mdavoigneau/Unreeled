@@ -81,7 +81,7 @@ With the `cf` CLI signed in (`npx cf auth whoami`).
      "APNS_KEY": "-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n",
      "APNS_KEY_ID": "XXXXXXXXXX",
      "APNS_TEAM_ID": "YYYYYYYYYY",
-     "APNS_TOPIC": "app.unreeled"
+     "APNS_TOPIC": "app.unreeled.ios"
    }
    ```
 

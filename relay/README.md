@@ -129,7 +129,7 @@ Environment=DATA_FILE=/opt/unreeled-relay/data/relay.json
 Environment=APNS_KEY_FILE=/opt/unreeled-relay/secrets/AuthKey.p8
 Environment=APNS_KEY_ID=XXXXXXXXXX
 Environment=APNS_TEAM_ID=YYYYYYYYYY
-Environment=APNS_TOPIC=app.unreeled
+Environment=APNS_TOPIC=app.unreeled.ios
 Environment=PAIRING_TOKEN=a-long-random-string
 Environment=OPERATOR_TOKEN=another-long-random-string
 

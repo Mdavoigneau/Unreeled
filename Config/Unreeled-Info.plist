@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Asked of every build uploaded to Apple: does it use encryption beyond the exempt kinds?
+	     No: HTTPS, the Keychain and CryptoKit are all the iPhone's own (docs/RELEASING.md). -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UnreeledRelayHost</key>
 	<string>$(UNREELED_RELAY_HOST)</string>
 	<key>UnreeledRelayToken</key>
