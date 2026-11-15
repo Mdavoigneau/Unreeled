@@ -242,14 +242,10 @@ private struct ActivityRow: View {
             linked { Facepile(urls: urls) }
         } else if let person = item.person {
             let ring = stories.ring(forUserID: person.id, latestStory: item.args?.latestReelMedia)
-            Button {
+            StoryButton(url: urls.first ?? item.people.first?.avatarURL, size: 40, ring: ring) {
                 stories.open([person.id])
-            } label: {
-                StoryAvatar(url: urls.first ?? item.people.first?.avatarURL, size: 40, ring: ring)
-                    .frame(width: 48, height: 48)
             }
-            .buttonStyle(.plain)
-            .disabled(ring == .none)
+            .frame(width: 48, height: 48)
             .accessibilityLabel(ring == .none ? person.username : "\(person.username)'s story")
         } else {
             Avatar(url: urls.first, size: 40).frame(width: 48, height: 48)

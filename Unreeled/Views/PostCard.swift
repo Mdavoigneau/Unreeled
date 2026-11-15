@@ -28,15 +28,13 @@ struct PostCard: View {
     private var header: some View {
         HStack(spacing: 10) {
             if let user = post.user {
-                let ring = stories.ring(forUserID: user.id, latestStory: user.latestReelMedia)
                 // The avatar opens their story when they have one, like it used to.
-                Button {
+                StoryButton(
+                    url: user.avatarURL, size: 32,
+                    ring: stories.ring(forUserID: user.id, latestStory: user.latestReelMedia)
+                ) {
                     stories.open([user.id])
-                } label: {
-                    StoryAvatar(url: user.avatarURL, size: 32, ring: ring)
                 }
-                .buttonStyle(.plain)
-                .disabled(ring == .none)
 
                 NavigationLink(value: Route.profile(user)) {
                     VStack(alignment: .leading, spacing: 1) {

@@ -254,6 +254,26 @@ struct StoryAvatar: View {
     }
 }
 
+/// An avatar that opens the account's story when there's one. Without a story it's only a
+/// picture, not a button switched off: that would show it faded.
+struct StoryButton: View {
+    let url: URL?
+    var size: CGFloat
+    var ring: StoryAvatar.Ring
+    let open: () -> Void
+
+    var body: some View {
+        if ring == .none {
+            StoryAvatar(url: url, size: size, ring: ring)
+        } else {
+            Button(action: open) {
+                StoryAvatar(url: url, size: size, ring: ring)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
 /// An instagram.com page, with the app's bar on top.
 struct WebPageScreen: View {
     let path: String

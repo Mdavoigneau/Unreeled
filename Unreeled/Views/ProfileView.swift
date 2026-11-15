@@ -105,12 +105,11 @@ private struct ProfileHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 20) {
-                let ring = stories.ring(forUserID: profile.id, latestStory: profile.latestReelMedia)
-                Button(action: openStory) {
-                    StoryAvatar(url: profile.avatarURL, size: 80, ring: ring)
-                }
-                .buttonStyle(.plain)
-                .disabled(ring == .none)
+                StoryButton(
+                    url: profile.avatarURL, size: 80,
+                    ring: stories.ring(forUserID: profile.id, latestStory: profile.latestReelMedia),
+                    open: openStory
+                )
 
                 VStack(spacing: 10) {
                     HStack(spacing: 0) {
