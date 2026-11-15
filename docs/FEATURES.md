@@ -115,6 +115,7 @@ In a conversation:
 - **Other notices** from Instagram are small grey lines.
 - **Older messages** load one page of 20 each time you scroll up to the top, at most one a second, and the message you were reading stays where it is.
 - **Sending** shows your message straight away. Under your latest message: "Sending…", then "✓ Delivered" once Instagram has it, then "Seen" when they've read it. If it fails: "Not sent · Tap to retry".
+- **The field** grows with your message up to five lines, then scrolls. Sending empties it and keeps the keyboard up. What's sent is what you typed: the grey end of a word the keyboard is only suggesting isn't part of it until you accept it. The field is a text view of the app's own ([MessageField.swift](../Unreeled/Views/MessageField.swift)), because SwiftUI's kept the text in two places and a sent message could stay in the field.
 
 The website gets new messages over a live connection the app doesn't have. Instead, an open conversation checks for new messages every 15 seconds, and the inbox reloads when you come back from a conversation (and at most every 10 seconds otherwise). A reload refreshes the top of the list and keeps the conversations loaded below it, so you stay where you were. New messages scroll into view only if you're already at the bottom or the message is yours.
 

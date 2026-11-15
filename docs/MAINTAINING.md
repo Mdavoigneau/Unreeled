@@ -66,14 +66,14 @@ Launch arguments that help when testing:
 - `-probe 'GQL QueryName {"variable": …}'` runs a query at launch and logs the shape of its response.
 - `-directShapes YES` logs the shape of every conversation you open: field names and the kinds of message in it, never what they say. Use it to see a new kind of message the app doesn't show yet.
 - `-noStorySeen YES` opens stories without telling Instagram you saw them, to test the story viewer without showing up in anyone's viewers.
-- `-standInConversations YES` opens a blank stand-in instead of a conversation, to test the inbox without opening anyone's messages or marking them read.
+- `-standInConversations YES` opens a stand-in instead of a conversation, to test the inbox without opening anyone's messages or marking them read. Its message field is the real one, to test typing and sending: what you send there shows on that screen and goes nowhere.
 - `-testVoiceClip YES` records a test tone instead of the microphone.
 - `-queriesURL <url>` takes query updates from that address, looked at every launch; with `-queriesUnsigned YES`, without checking the signature.
 - `-relay <address>` uses that notification relay, such as `http://localhost:8787`, and `-pushDryRun YES` turns notifications on without registering anything with Instagram. Together they try notifications in the simulator: see Testing in [NOTIFICATIONS.md](NOTIFICATIONS.md).
 
 ## Testing on a real account
 
-Anything that writes (a like, a message, a story) acts on a real account and other people see it. Test on your own posts, or with a friend who agreed, and undo what you can. Opening someone's conversation marks it read for them; use `-standInConversations YES` to work on the inbox.
+Anything that writes (a like, a message, a story) acts on a real account and other people see it. Test on your own posts, or with a friend who agreed, and undo what you can. Opening someone's conversation marks it read for them; use `-standInConversations YES` to work on the inbox or on the message field.
 
 ## Building for your own iPhone
 

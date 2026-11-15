@@ -638,17 +638,13 @@ struct ConversationView: View {
 
 /// The field at the bottom: text, photos and videos, and voice messages. A view of its own, so
 /// typing redraws only this, not the conversation above it.
-private struct Composer: View {
+struct Composer: View {
     let model: ConversationModel
     let recorder: VoiceRecorder
     @Environment(Session.self) private var session
-    @State private var draft = ""
+    @State private var draft = MessageDraft()
     @State private var picked: [PhotosPickerItem] = []
     @State private var micDenied = false
-
-    private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
 
     var body: some View {
         Group {
@@ -686,16 +682,14 @@ private struct Composer: View {
                 picked = []
                 model.send(items, api: session.api)
             }
-            TextField("Write a message…", text: $draft, axis: .vertical)
-                .font(Theme.font(15))
-                .lineLimit(1...5)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
+            MessageField(draft: draft, placeholder: "Write a message…")
+                .clipShape(RoundedRectangle(cornerRadius: 20))
                 .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Theme.hairline))
-            if canSend {
+            if draft.hasText {
                 Button("Send") {
-                    let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    draft = ""
+                    // What the field shows, taken out of it: nothing is left behind.
+                    let text = draft.take()
+                    guard !text.isEmpty else { return }
                     Task { await model.send(text, api: session.api) }
                 }
                 .font(Theme.font(15, .medium))
@@ -965,8 +959,20 @@ final class ConversationModel {
         if messages.first(where: { $0.id == pending.id })?.failed != true { preparedMedia[pending.id] = nil }
     }
 
+    #if DEBUG
+    /// The stand-in conversation's (-standInConversations YES): what it's given to send shows
+    /// as sent and goes nowhere.
+    var sendsNothing = false
+    #endif
+
     private func deliver(_ pending: DirectMessage, api: InstagramAPI, sending: () async throws -> SentMessage) async {
         messages.append(pending)
+        #if DEBUG
+        if sendsNothing {
+            messages[messages.count - 1].confirmedID = ""
+            return
+        }
+        #endif
         do {
             let sent = try await sending()
             if let index = messages.firstIndex(where: { $0.id == pending.id }) {

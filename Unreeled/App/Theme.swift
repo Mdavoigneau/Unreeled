@@ -38,6 +38,12 @@ enum Theme {
         .custom(weight.fontName, size: size, relativeTo: .body)
     }
 
+    /// The same font for a UIKit view.
+    static func uiFont(_ size: CGFloat, _ weight: Weight = .regular) -> UIFont {
+        let font = UIFont(name: weight.fontName, size: size) ?? .systemFont(ofSize: size)
+        return UIFontMetrics(forTextStyle: .body).scaledFont(for: font)
+    }
+
     static let wordmark = Font.custom("SnellRoundhand-Bold", size: 28)
     static let icon = Font.system(size: 23, weight: .light)
 }
