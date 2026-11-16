@@ -203,7 +203,8 @@ function videoData(page) {
     description: page.description,
     thumbnailUrl: `${site}/video/${page.video.file}.png`,
     contentUrl: `${site}/video/${page.video.file}.mp4`,
-    uploadDate: page.published,
+    // A date and time with its offset: Google counts a date alone, or a time without one, as wrong.
+    uploadDate: page.video.uploaded,
     duration: page.video.duration,
     transcript: page.video.transcript,
     inLanguage: "en",
@@ -441,12 +442,13 @@ const pages = [
       "What happens to your Instagram login in Unreeled, the one thing the app downloads, and how notifications pass through a relay that can't read them. With a two-minute video.",
     published: "2026-11-14",
     modified: "2026-11-14",
+    // When the page and its video went up (commit 6955c60), Sydney time.
+    video: { ...video, uploaded: "2026-11-14T13:59:00+11:00" },
     about: [
       ["End-to-end encryption", "https://en.wikipedia.org/wiki/End-to-end_encryption"],
       ["Push technology", "https://en.wikipedia.org/wiki/Push_technology"],
       ["Open-source software", "https://en.wikipedia.org/wiki/Open-source_software"],
     ],
-    video,
   },
   {
     file: "privacy.html",
