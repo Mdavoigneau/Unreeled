@@ -81,7 +81,10 @@ enum MediaPreparation {
         let cover = UIImage(cgImage: frame)
         return PreparedMedia(
             isVideo: true, data: data, preview: cover, coverJPEG: cover.jpegData(compressionQuality: 0.85),
-            width: Int(width), height: Int(height), durationMs: Int(duration.seconds * 1000)
+            width: Int(width), height: Int(height),
+            // 0 for a length that isn't a number, as a video's can be: turning that into a whole
+            // number would stop the app.
+            durationMs: Int(exactly: (duration.seconds * 1000).rounded()) ?? 0
         )
     }
 

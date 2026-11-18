@@ -12,20 +12,66 @@ final class StoriesModel {
         let start: Int
     }
 
-    var tray: [Reel] = []
+    var tray: [Reel] = [] {
+        didSet { updateMarks() }
+    }
     var presented: Presentation?
     /// Reels loaded with their items, by owner ID.
-    private var loaded: [String: Reel] = [:]
+    private var loaded: [String: Reel] = [:] {
+        didSet { updateMarks() }
+    }
     /// Loaded reels taken from what the phone saved, not from Instagram since launch: the viewer
     /// asks Instagram for one as it shows it, as the website does, and Instagram's answer
     /// replaces it.
     private var fromPhone: Set<String> = []
     /// When the newest item you saw in each reel was posted, as you watch.
-    private var seenUpTo: [String: Double] = [:]
+    private var seenUpTo: [String: Double] = [:] {
+        didSet { updateMarks() }
+    }
+
+    /// What a ring shows, account by account: how far you've seen, and the tray's newest story
+    /// for an account in the tray. One object each, so an avatar redraws only when its own
+    /// account's ring can change, not whenever any story anywhere loads or is watched.
+    @MainActor
+    @Observable
+    final class Marks {
+        fileprivate(set) var seen: Double = 0
+        fileprivate(set) var latestInTray: Double?
+    }
+
+    @ObservationIgnored private var marks: [String: Marks] = [:]
+
+    private func marks(for id: String) -> Marks {
+        if let existing = marks[id] { return existing }
+        let new = Marks()
+        set(new, for: id)
+        marks[id] = new
+        return new
+    }
+
+    /// Each account's marks as the tray, what's loaded and what you saw now say: set only where
+    /// they changed, since setting one tells its avatars to redraw even to the same value.
+    private func updateMarks() {
+        guard !marks.isEmpty else { return }
+        for (id, mark) in marks { set(mark, for: id) }
+    }
+
+    /// Read from the properties' own storage, untracked: a view asking for a ring for the first
+    /// time makes its account's marks here, and is to follow only those, not the whole tray.
+    private func set(_ mark: Marks, for id: String) {
+        let inTray = _tray.first { $0.id == id }
+        let seen = max(_seenUpTo[id] ?? 0, _loaded[id]?.seen ?? 0, inTray?.seen ?? 0)
+        if mark.seen != seen { mark.seen = seen }
+        let latest = inTray.map { $0.latestReelMedia ?? 0 }
+        if mark.latestInTray != latest { mark.latestInTray = latest }
+    }
 
     func loadTray(api: InstagramAPI) async {
         // The tray as it was last time, at once, then Instagram's.
-        if tray.isEmpty { tray = api.cachedStoriesTray() }
+        if tray.isEmpty {
+            let saved = await api.savedStoriesTray()
+            if tray.isEmpty { tray = saved }
+        }
         guard let fresh = try? await api.storiesTray() else { return }
         // A reel loaded earlier that has something newer loads again when you open it.
         for reel in fresh {
@@ -151,6 +197,14 @@ final class StoriesModel {
         runDownloads()
     }
 
+    /// The viewer is streaming this video, which isn't on the phone: it isn't downloaded as well,
+    /// now or later, since both would share the connection it's playing over.
+    func streaming(_ url: URL) {
+        downloads.removeAll { $0 == url }
+        urgent.remove(url)
+        StoryFiles.shared.cancelDownload(url)
+    }
+
     /// What the viewer shows next goes first in line.
     func prioritize(_ items: [Media]) {
         let urls = items.flatMap(Self.files)
@@ -184,7 +238,8 @@ final class StoriesModel {
 
     func open(_ reelIDs: [String], at start: Int = 0) {
         guard !reelIDs.isEmpty else { return }
-        presented = Presentation(reelIDs: reelIDs, start: start)
+        // Within the list, should it have shrunk since whoever asked counted.
+        presented = Presentation(reelIDs: reelIDs, start: min(max(start, 0), reelIDs.count - 1))
     }
 
     /// Everyone else's stories in the tray, starting at the first reel with something new.
@@ -199,15 +254,18 @@ final class StoriesModel {
         return max(reel.seen ?? 0, seenUpTo[reel.id] ?? 0, loaded[reel.id]?.seen ?? 0, inTray)
     }
 
+    /// A tray reel's ring. In a view, this reads only that account's marks.
     func ring(for reel: Reel) -> StoryAvatar.Ring {
-        (reel.latestReelMedia ?? 0) > seen(reel) ? .unseen : .seen
+        (reel.latestReelMedia ?? 0) > max(reel.seen ?? 0, marks(for: reel.id).seen) ? .unseen : .seen
     }
 
-    /// For an avatar outside the tray (a post's author, a profile).
+    /// For an avatar outside the tray (a post's author, a profile, a conversation). In a view,
+    /// this reads only that account's marks.
     func ring(forUserID id: String, latestStory: Double?) -> StoryAvatar.Ring {
         guard let latestStory, latestStory > Date().timeIntervalSince1970 - 86_400 else { return .none }
-        if let reel = tray.first(where: { $0.id == id }) { return ring(for: reel) }
-        return latestStory > max(seenUpTo[id] ?? 0, loaded[id]?.seen ?? 0) ? .unseen : .seen
+        let mark = marks(for: id)
+        if let latestInTray = mark.latestInTray { return latestInTray > mark.seen ? .unseen : .seen }
+        return latestStory > mark.seen ? .unseen : .seen
     }
 
     /// A reel already loaded, if it is, without the items whose day is over.
@@ -248,7 +306,9 @@ final class StoriesModel {
         seenUpTo[reel.id] = postedAt
         #if DEBUG
         // -noStorySeen YES: tests the viewer without putting you in anyone's list of viewers.
-        if UserDefaults.standard.bool(forKey: "noStorySeen") { return }
+        // The same with stand-in conversations on: a build being tested that way reaches no one,
+        // whatever a stray tap opens.
+        if UserDefaults.standard.bool(forKey: "noStorySeen") || StandIn.isOn { return }
         #endif
         Task { try? await api.markStorySeen(item, ownerID: reel.id) }
     }
@@ -291,7 +351,7 @@ final class StoriesModel {
     func loadMe(userID: String, api: InstagramAPI) async {
         guard !hasLoadedMe else { return }
         hasLoadedMe = true
-        if myAvatarURL == nil { myAvatarURL = api.cachedProfile(id: userID)?.avatarURL }
+        if myAvatarURL == nil, let saved = await api.savedProfile(id: userID), myAvatarURL == nil { myAvatarURL = saved.avatarURL }
         if let profile = try? await api.profile(id: userID) {
             myAvatarURL = profile.avatarURL
         } else {
@@ -615,6 +675,15 @@ struct StoryViewer: View {
         let itemID: String
         let player: AVPlayer
     }
+
+    /// The next video, opened from the phone ahead of time so that it starts at once.
+    struct PreparedVideo {
+        let itemID: String
+        let file: URL
+        let item: AVPlayerItem
+    }
+
+    @State private var preparedVideo: PreparedVideo?
 
     /// Holding a finger down, typing a reply, deciding whether to delete, or closing.
     private var isPaused: Bool { isHolding || isReplying || confirmingDelete || isClosing }
@@ -992,9 +1061,18 @@ struct StoryViewer: View {
 
         if item.isVideo, let url = item.videoURL,
            let source = StoryFiles.shared.file(for: url) ?? (MediaHosts.allows(url) ? url : nil) {
-            // From the phone when it was loaded ahead, which starts at once; streamed otherwise,
-            // from Instagram's servers only. A video from anywhere else shows as its cover.
-            let player = AVPlayer(url: source)
+            // From the phone when it was loaded ahead, which starts at once, opened already when
+            // it came next; streamed otherwise, from Instagram's servers only, and then not
+            // downloaded as well. A video from anywhere else shows as its cover.
+            let prepared = preparedVideo.flatMap { $0.itemID == item.id && $0.file == source ? $0.item : nil }
+            preparedVideo = nil
+            if !source.isFileURL { stories.streaming(url) }
+            #if DEBUG
+            NetworkRecorder.append(["time": Date().ISO8601Format(), "storyVideo": [
+                "from": source.isFileURL ? "phone" : "streamed", "openedAhead": prepared != nil,
+            ]])
+            #endif
+            let player = AVPlayer(playerItem: prepared ?? AVPlayerItem(url: source))
             playing = PlayingVideo(itemID: item.id, player: player)
             clock.start(duration: item.videoDuration ?? 15, player: player)
             if !isPaused { player.play() }
@@ -1048,6 +1126,22 @@ struct StoryViewer: View {
         stories.prioritize(upcoming)
         if let url = upcoming.first?.imageURL(width: Self.imageWidth) {
             Task { _ = await ImageCache.shared.image(for: url, store: .stories) }
+        }
+        if let next = upcoming.first { prepareVideo(next) }
+    }
+
+    /// Opens the next video ahead, once its file is on the phone: its tracks are read and it's
+    /// ready to show its first frame when its turn comes. The file is the one being loaded
+    /// ahead anyway, waited for rather than asked for again.
+    private func prepareVideo(_ next: Media) {
+        guard next.isVideo, let url = next.videoURL, preparedVideo?.itemID != next.id else { return }
+        let itemID = next.id
+        Task {
+            // Only used if it's the video that comes up, from this same file (see `play`).
+            guard let file = await StoryFiles.shared.download(url), preparedVideo?.itemID != itemID else { return }
+            let asset = AVURLAsset(url: file)
+            _ = try? await asset.load(.isPlayable, .duration)
+            preparedVideo = PreparedVideo(itemID: itemID, file: file, item: AVPlayerItem(asset: asset))
         }
     }
 

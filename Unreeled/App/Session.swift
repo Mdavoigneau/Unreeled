@@ -146,9 +146,10 @@ final class Session {
 
     /// Everything the app keeps for the login that's ending, then `next`: the website's data (its
     /// cookies too, unless they hold another account's login), the saved copies, conversations,
-    /// pictures and stories, on the phone and in memory, the voice messages you recorded, which
-    /// conversations you open most, the website's session values, and the ID Direct knows this
-    /// phone by. Screens give way meanwhile, and nothing is read or kept for that login.
+    /// pictures and stories, on the phone and in memory, what you typed and didn't send, the voice
+    /// messages you recorded, which conversations you open most, the website's session values,
+    /// and the ID Direct knows this phone by. Screens give way meanwhile, and nothing is read or
+    /// kept for that login.
     private func forget(keepingCookies: Bool, then next: State) async {
         isEnding = true
         generation += 1
@@ -161,6 +162,7 @@ final class Session {
         UserDefaults.standard.removeObject(forKey: "username")
         ResponseCache.shared.removeAll()
         ThreadStore.removeAll()
+        Drafts.removeAll()
         ChatStats.removeAll()
         ImageCache.shared.removeAll()
         ImageFiles.shared.removeAll()

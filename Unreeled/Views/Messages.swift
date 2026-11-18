@@ -220,7 +220,13 @@ final class InboxModel {
     private var mailboxID: String?
     private var cursor: String?
     private var loadedAt: Date?
-    private var isRefreshing = false
+    /// Instagram's list on its way.
+    private var refreshing: Task<Void, Never>?
+    /// Conversations marked read from here, by how far (the message's time, in milliseconds),
+    /// and when. Instagram's list can come back from before a mark reached it: the row stays
+    /// read meanwhile, for two minutes at most, so a look at a conversation isn't undone by
+    /// the list that loads as you come back.
+    private var readMarks: [String: (upTo: Double, at: Date)] = [:]
     private var isPrefetching = false
 
     /// Conversations with something new from someone else: the badge on Home's paper plane.
@@ -240,11 +246,15 @@ final class InboxModel {
         var seen = Set<String>()
         let ids = (threads.prefix(8).map(\.id) + ChatStats.mostOpened(3)).filter { seen.insert($0).inserted }
         for thread in await ThreadStore.warm(ids).prefix(3) {
-            ImageCache.shared.warm(thread.people.compactMap(\.avatarURL) + Self.latestPictures(of: thread).prefix(4))
+            ImageCache.shared.warm(
+                thread.people.compactMap(\.avatarURL) + Self.latestPictures(of: thread).prefix(4), fitting: MessageRow.largestPicture
+            )
         }
     }
 
     /// The saved inbox at once, then Instagram's. Without `force`, not again within ten seconds.
+    /// Asked again while Instagram's is on its way, it waits for that one: whoever asked finds
+    /// the list as new as it gets when this returns.
     func load(api: InstagramAPI, force: Bool = true) async {
         if threads.isEmpty, let saved = api.cachedInbox() {
             threads = saved.threads
@@ -252,13 +262,16 @@ final class InboxModel {
             cursor = saved.cursor
         }
         if !force, let loadedAt, Date.now.timeIntervalSince(loadedAt) < 10 { return }
-        guard !isRefreshing else { return }
-        isRefreshing = true
+        if let refreshing { return await refreshing.value }
+        let task = Task { await refresh(api: api) }
+        refreshing = task
+        await task.value
+        if refreshing == task { refreshing = nil }
+    }
+
+    private func refresh(api: InstagramAPI) async {
         isLoading = threads.isEmpty
-        defer {
-            isRefreshing = false
-            isLoading = false
-        }
+        defer { isLoading = false }
         do {
             let inbox = try await api.inbox()
             if threads.count > inbox.threads.count {
@@ -273,6 +286,7 @@ final class InboxModel {
             mailboxID = inbox.mailboxID
             loadedAt = .now
             error = nil
+            applyReadMarks()
             forgetSentLines()
             ImageCache.shared.warm(threads.compactMap { $0.people.first?.avatarURL })
             prefetch(api: api)
@@ -289,6 +303,36 @@ final class InboxModel {
         guard (conversation.lastMessage?.timestamp ?? 0) >= (old.lastMessage?.timestamp ?? 0) else { return }
         place(old.updated(with: conversation).readByViewer(), at: index)
         forgetSentLines()
+    }
+
+    /// A conversation being marked read up to a message's time: its row shows read, and stays
+    /// so while Instagram's copy is behind.
+    func markingRead(_ threadID: String, upTo time: Double) {
+        readMarks[threadID] = (time, .now)
+        applyReadMarks()
+    }
+
+    /// Instagram didn't take the mark: what it says shows again at the next load.
+    func markNotTaken(_ threadID: String, upTo time: Double) {
+        if readMarks[threadID]?.upTo == time { readMarks[threadID] = nil }
+    }
+
+    /// Rows whose conversation was marked read here, and Instagram's copy doesn't say so yet.
+    private func applyReadMarks() {
+        guard !readMarks.isEmpty else { return }
+        for (id, mark) in readMarks {
+            guard Date.now.timeIntervalSince(mark.at) < 120, let index = threads.firstIndex(where: { $0.id == id }) else {
+                readMarks[id] = nil
+                continue
+            }
+            let row = threads[index]
+            if row.readUpTo >= mark.upTo, row.markedAsUnread != true {
+                // Instagram has it.
+                readMarks[id] = nil
+            } else if (row.lastMessage?.timestamp ?? 0) <= mark.upTo, row.isUnread {
+                threads[index] = row.readByViewer()
+            }
+        }
     }
 
     /// You opened the conversation: it shows read at once, as in Instagram's app.
@@ -351,10 +395,10 @@ final class InboxModel {
         loadedAt = nil
     }
 
-    /// The loaded conversation with this ID, in either of the two forms Instagram uses.
+    /// The loaded conversation with this ID, in any of the forms Instagram uses (`DirectThread.ids`).
     func thread(withID id: String?) -> DirectThread? {
-        guard let id else { return nil }
-        return threads.first { $0.threadId == id || $0.threadFbid == id }
+        guard let id, !id.isEmpty else { return nil }
+        return threads.first { $0.ids.contains(id) }
     }
 
     /// The four most recent conversations and the three you open most, loaded ahead a second
@@ -384,7 +428,7 @@ final class InboxModel {
     /// once, the others onto disk.
     static func prefetchPictures(of thread: DirectThread) {
         let pictures = latestPictures(of: thread)
-        ImageCache.shared.prefetch(thread.people.compactMap(\.avatarURL) + pictures.prefix(4), decode: true)
+        ImageCache.shared.prefetch(thread.people.compactMap(\.avatarURL) + pictures.prefix(4), decode: true, fitting: MessageRow.largestPicture)
         ImageCache.shared.prefetch(Array(pictures.dropFirst(4)), decode: false)
     }
 
@@ -479,20 +523,26 @@ struct ConversationView: View {
     @Environment(InboxModel.self) private var inbox
     @Environment(PushNotifications.self) private var notifications
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openURL) private var openURL
     @State private var model: ConversationModel
     @State private var viewing: MediaItem?
     @State private var viewOnce: DirectMessage?
     @State private var recorder = VoiceRecorder()
-    /// Whether you're at the end of the conversation, where new messages scroll into view.
-    @State private var atBottom = true
+    @State private var voice = VoicePlayer()
     /// From appearing until it goes, or until a screen opens over it.
     @State private var isShown = false
     /// The IDs it was opened with, which the tabs know it by (`PushNotifications.visibleThread`).
     private let ids: Set<String>
 
     init(thread: DirectThread) {
+        #if DEBUG
+        // -standInConversations YES: the screen as it is, on a made-up conversation (StandIn).
+        _model = State(initialValue: StandIn.isOn ? StandIn.conversation() : ConversationModel(thread: thread))
+        #else
         _model = State(initialValue: ConversationModel(thread: thread))
-        ids = Set([thread.threadId, thread.threadFbid].compactMap { $0 })
+        #endif
+        ids = thread.ids
     }
 
     /// The open tab shows it, with nothing on top of it.
@@ -504,66 +554,28 @@ struct ConversationView: View {
     private var isOnScreen: Bool { isShown && isInOpenTab && scenePhase == .active }
 
     var body: some View {
-        // The field under the list rather than as an inset, so the list knows its height from
-        // the start and opens on the newest message.
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 3) {
-                        if model.cursor != nil {
-                            // One page each time you scroll up to here. The message you were reading
-                            // stays in place as the page comes in above it, which moves this off
-                            // screen until you scroll up through that page.
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(12)
-                                .onScrollVisibilityChange(threshold: 0.5) { visible in
-                                    if visible { model.loadOlder(api: session.api) }
-                                }
-                        }
-                        let shown = model.shownMessages
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, message in
-                            MessageRow(
-                                message: message,
-                                previous: index > 0 ? shown[index - 1] : nil,
-                                next: index + 1 < shown.count ? shown[index + 1] : nil,
-                                thread: model.thread,
-                                status: index == shown.count - 1 ? model.lastMessageStatus : nil,
-                                open: { viewing = $0 },
-                                handOff: { viewOnce = $0 },
-                                heart: { model.toggleHeart(on: message, api: session.api) },
-                                retry: { Task { await model.retry(message, api: session.api) } }
-                            )
-                            .id(message.id)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                }
-                .defaultScrollAnchor(.bottom)
-                .scrollDismissesKeyboard(.interactively)
-                .onScrollPhaseChange { _, phase in
-                    // A scroll view moving on its own ignores where it's told to be: older messages
-                    // wait until it stops.
-                    model.isScrolling = phase != .idle
-                }
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.visibleRect.maxY > geometry.contentSize.height - 80
-                } action: { _, isAtBottom in
-                    atBottom = isAtBottom
-                }
-                .onChange(of: model.olderPagesShown) {
-                    // Back to the message you were reading, now under the page that came in above it.
-                    if let id = model.keepInView { proxy.scrollTo(id, anchor: .top) }
-                }
-                .onChange(of: model.shownMessages.last?.id) { _, last in
-                    // Yours, or theirs while you're at the end; not while you're reading further up.
-                    guard let last, atBottom || model.shownMessages.last?.senderFbid == model.thread.viewerFbid else { return }
-                    withAnimation(.snappy(duration: 0.2)) { proxy.scrollTo(last, anchor: .bottom) }
-                }
-            }
-            Composer(model: model, recorder: recorder)
-        }
+        // The list and, under it, the field: one UIKit screen, down to the bottom edge, which
+        // makes room for the keyboard itself (MessageList).
+        MessageList(
+            rows: model.rows,
+            hasOlder: model.cursor != nil,
+            voice: voice,
+            composer: AnyView(Composer(model: model, recorder: recorder).environment(session).tint(Theme.accent)),
+            handlers: MessageHandlers(
+                // One page each time the list comes near its top. What you were reading stays
+                // in place as the page comes in above it.
+                reachedTop: { model.loadOlder(api: session.api) },
+                open: { viewing = $0 },
+                handOff: { viewOnce = $0 },
+                heart: { model.toggleHeart(on: $0, api: session.api) },
+                retry: { message in Task { await model.retry(message, api: session.api) } },
+                navigate: { navigate($0) },
+                openURL: { openURL($0) },
+                showOnWebsite: { navigate(.web(path: "/direct/t/\(model.thread.id)/", title: model.thread.title)) }
+            )
+        )
+        .ignoresSafeArea(.container, edges: .bottom)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .background(Color.white)
         .classicBar(showsBack: true) {
             HStack(spacing: 8) {
@@ -583,19 +595,24 @@ struct ConversationView: View {
         .onDisappear {
             isShown = false
             recorder.cancel()
+            voice.stop()
         }
         .sheet(item: $viewOnce) { message in
             ViewOnceNote(name: firstName(of: message), isVideo: message.isVideo, threadID: model.thread.id)
         }
         .task {
             // Back in the inbox, its new messages and read state show.
+            model.inbox = inbox
             inbox.invalidate()
             inbox.showRead(model.thread.id)
             model.open()
+            #if DEBUG
+            ScrollScript.runIfRequested()
+            #endif
             // New messages arrive through the website's live connection, which the app doesn't
             // have: look again every 15 seconds while the conversation is on screen.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(15))
+                try? await Task.sleep(for: model.looksEvery)
                 if !Task.isCancelled, model.isOnScreen {
                     await model.refresh(api: session.api)
                 }
@@ -608,9 +625,12 @@ struct ConversationView: View {
             if onScreen { Task { await model.refresh(api: session.api) } }
         }
         // Taken to another tab by a notification you tapped: a recording under way stops, as it
-        // does when you leave the conversation.
+        // does when you leave the conversation, and so does a voice message playing.
         .onChange(of: isInOpenTab) { _, inOpenTab in
-            if !inOpenTab { recorder.cancel() }
+            if !inOpenTab {
+                recorder.cancel()
+                voice.stop()
+            }
         }
         // With notifications on, one arriving says there's something new right away.
         .onChange(of: notifications.arrivals) {
@@ -642,9 +662,15 @@ struct Composer: View {
     let model: ConversationModel
     let recorder: VoiceRecorder
     @Environment(Session.self) private var session
-    @State private var draft = MessageDraft()
+    @State private var draft: MessageDraft
     @State private var picked: [PhotosPickerItem] = []
     @State private var micDenied = false
+
+    init(model: ConversationModel, recorder: VoiceRecorder) {
+        self.model = model
+        self.recorder = recorder
+        _draft = State(initialValue: MessageDraft(conversation: model.thread.id))
+    }
 
     var body: some View {
         Group {
@@ -765,17 +791,36 @@ struct Composer: View {
     }
 }
 
+/// What a conversation asks of Instagram. The app's API answers; in a Debug build a stand-in
+/// can instead (StandIn), which plays Instagram's part on the phone and reaches no one.
+@MainActor
+protocol ConversationSource: AnyObject {
+    func thread(id: String) async throws -> DirectThread?
+    func olderMessages(threadID: String, cursor: String) async throws -> Page<DirectMessage>
+    func send(_ text: String, threadID: String, offlineID: String?) async throws -> SentMessage
+    func sendMedia(_ data: Data, mimeType: String, threadID: String, offlineID: String?) async throws -> SentMessage
+    func sendVoice(pcm url: URL, threadID: String, offlineID: String?) async throws -> SentMessage
+    func react(_ emoji: String, to messageID: String, threadID: String, adding: Bool) async throws
+    func markRead(threadID: String, messageID: String, timestampMs: String) async throws -> Bool
+}
+
+extension InstagramAPI: ConversationSource {}
+
 @MainActor
 @Observable
 final class ConversationModel {
-    private(set) var thread: DirectThread
+    private(set) var thread: DirectThread {
+        didSet { if thread != oldValue { updateRows() } }
+    }
     /// Oldest first.
-    var messages: [DirectMessage]
+    var messages: [DirectMessage] {
+        didSet { updateRows() }
+    }
+    /// The messages on screen, each as its row shows it. Set again only when a row would show
+    /// something else: a look at Instagram that changes nothing leaves the list alone.
+    private(set) var rows: [Row] = []
     /// Where older messages start; nil when there are none, or before the first load.
     var cursor: String?
-    /// Pages of older messages added so far, and the message to keep on screen as one comes in.
-    private(set) var olderPagesShown = 0
-    private(set) var keepInView: String?
     var error: ShownError?
     /// You're looking at the conversation, as its view says: only then is what's new marked read.
     var isOnScreen = false
@@ -808,6 +853,16 @@ final class ConversationModel {
         } else {
             messages = inbox
         }
+        updateRows()
+    }
+
+    /// How often it looks for new messages while it's on screen.
+    var looksEvery: Duration {
+        #if DEBUG
+        // The stand-in answers from the phone: often, so a test doesn't wait.
+        if standIn != nil { return .seconds(3) }
+        #endif
+        return .seconds(15)
     }
 
     private static func preview(_ message: DirectMessage) -> DirectMessage {
@@ -819,12 +874,33 @@ final class ConversationModel {
     /// Counted among the conversations you open most. Its messages load as it comes into view
     /// (`refresh`, from the view).
     func open() {
+        #if DEBUG
+        if standIn != nil { return }
+        #endif
         ChatStats.recordOpen(thread.id)
     }
 
+    #if DEBUG
+    /// The stand-in conversation's Instagram (-standInConversations YES): everything this
+    /// conversation would ask of Instagram or send to it goes there instead, and stays on the phone.
+    @ObservationIgnored var standIn: (any ConversationSource)?
+    #endif
+
+    /// Instagram, or in a Debug build the stand-in playing it.
+    private func source(_ api: InstagramAPI) -> any ConversationSource {
+        #if DEBUG
+        if let standIn { return standIn }
+        #endif
+        return api
+    }
+
     func refresh(api: InstagramAPI) async {
+        // What's on screen already is read from the moment you look at it, without waiting for
+        // Instagram's copy: a look too short for that to arrive, or a slow connection, counts.
+        // On its own, so that it goes even if you leave meanwhile.
+        Task { await markReadIfNeeded(api: api) }
         do {
-            guard let fresh = try await api.thread(id: thread.id) else { return }
+            guard let fresh = try await source(api).thread(id: thread.id) else { return }
             thread = fresh
             let latest = Array((fresh.slideMessages?.nodes ?? []).reversed())
             let shown = Set(messages.filter { !$0.isPending && !$0.isPreview }.map(\.id))
@@ -847,41 +923,27 @@ final class ConversationModel {
     }
 
     /// The page before the oldest message shown: one at a time, and at least a second apart,
-    /// however often the scroll view says you've reached the top.
+    /// however often the list says it's near its top. The list keeps what you were reading in
+    /// place as the page comes in above it.
     func loadOlder(api: InstagramAPI) {
         guard let cursor, !isLoadingOlder, Date.now.timeIntervalSince(lastOlderPage) > 1 else { return }
         isLoadingOlder = true
-        Task { await loadOlder(from: cursor, api: api) }
-    }
-
-    /// While the list moves (a fling, a bounce), a page that arrives waits for it to stop.
-    var isScrolling = false {
-        didSet { if !isScrolling { insertWaitingPage() } }
-    }
-
-    private var waitingPage: Page<DirectMessage>?
-
-    private func loadOlder(from cursor: String, api: InstagramAPI) async {
-        do {
-            waitingPage = try await api.olderMessages(threadID: thread.id, cursor: cursor)
-            if !isScrolling { insertWaitingPage() }
-        } catch {
-            self.error = ShownError(error)
-            isLoadingOlder = false
-            lastOlderPage = .now
+        Task {
+            defer {
+                isLoadingOlder = false
+                lastOlderPage = .now
+            }
+            do {
+                let page = try await source(api).olderMessages(threadID: thread.id, cursor: cursor)
+                // Not onto a conversation that started again from Instagram's copy meanwhile.
+                guard self.cursor == cursor else { return }
+                let known = Set(messages.map(\.id))
+                messages = page.items.reversed().filter { !known.contains($0.id) } + messages
+                self.cursor = page.cursor
+            } catch {
+                self.error = ShownError(error)
+            }
         }
-    }
-
-    private func insertWaitingPage() {
-        guard let page = waitingPage else { return }
-        waitingPage = nil
-        let known = Set(messages.map(\.id))
-        keepInView = messages.first?.id
-        messages = page.items.reversed().filter { !known.contains($0.id) } + messages
-        cursor = page.cursor
-        olderPagesShown += 1
-        isLoadingOlder = false
-        lastOlderPage = .now
     }
 
     /// Where your latest message is, when it's the last one in the conversation.
@@ -892,6 +954,70 @@ final class ConversationModel {
     /// The messages on screen: Instagram's "… reacted to your message" lines show as a heart on
     /// the message instead.
     var shownMessages: [DirectMessage] { messages.filter { !$0.isReactionLog } }
+
+    /// A message on screen with all its row shows: the message, and what its place among the
+    /// others adds (the time above it, whose it is, their picture, where it is on its way).
+    /// Rows are compared whole, so one that would show the same is left as it is.
+    ///
+    /// A row goes by its message's ID, except for a message you sent from here: Instagram's
+    /// copy of it comes with an ID of its own, and takes over the row the message was shown in
+    /// while it was on its way. To the list it's the same row throughout, which it neither
+    /// makes again nor scrolls to as the message is delivered.
+    struct Row: Identifiable, Equatable {
+        let id: String
+        let message: DirectMessage
+        let isMine: Bool
+        /// Your heart is on it.
+        let hasMyHeart: Bool
+        /// The time above it, when it comes more than half an hour after the message before.
+        let date: Date?
+        /// In a group, who sent it, above the first message of their run.
+        let senderName: String?
+        /// Their picture, which shows next to the last message of a run.
+        let avatar: URL?
+        let endsRun: Bool
+        /// Where your latest message is, under it when it's the conversation's last.
+        let status: DeliveryStatus?
+    }
+
+    private func updateRows() {
+        let shown = shownMessages
+        let viewer = thread.viewerFbid
+        let people = thread.people
+        let isGroup = thread.isGroup == true
+        let status = lastMessageStatus
+        let new = shown.indices.map { index -> Row in
+            let message = shown[index]
+            let previous = index > 0 ? shown[index - 1] : nil
+            let next = index + 1 < shown.count ? shown[index + 1] : nil
+            let isMine = message.senderFbid == viewer
+            let sender = people.first { $0.interopMessagingUserFbid == message.senderFbid }
+            // A time between messages more than half an hour apart.
+            let startsSection = previous.map { (message.timestamp ?? 0) - ($0.timestamp ?? 0) > 1_800_000 } ?? true
+            // A run ends with a change of sender, a line from Instagram, or five minutes.
+            let endsRun = next.map {
+                $0.notice != nil || $0.senderFbid != message.senderFbid || ($0.timestamp ?? 0) - (message.timestamp ?? 0) > 300_000
+            } ?? true
+            let startsRun = previous?.senderFbid != message.senderFbid
+            return Row(
+                id: rowID(of: message), message: message, isMine: isMine,
+                hasMyHeart: message.reactions.contains { $0.senderFbid == viewer },
+                date: startsSection ? message.date : nil,
+                senderName: isGroup && !isMine && message.notice == nil && startsRun ? sender?.username ?? message.sender?.name ?? "" : nil,
+                avatar: sender?.avatarURL ?? message.sender?.userDict?.avatarURL,
+                endsRun: endsRun,
+                status: index == shown.count - 1 ? status : nil
+            )
+        }
+        if new != rows { rows = new }
+    }
+
+    /// Instagram's ID for a message sent from here, to the ID of the row it was shown in.
+    private var sentRows: [String: String] = [:]
+
+    private func rowID(of message: DirectMessage) -> String {
+        sentRows[message.id] ?? message.id
+    }
 
     var lastMessageStatus: DeliveryStatus? {
         guard let last = shownMessages.last, last.senderFbid == thread.viewerFbid, last.notice == nil else { return nil }
@@ -910,7 +1036,7 @@ final class ConversationModel {
     func send(_ text: String, api: InstagramAPI, offlineID: String? = nil) async {
         let offlineID = offlineID ?? InstagramAPI.newOfflineID()
         await deliver(DirectMessage(pending: text, from: thread.viewerFbid, offlineID: offlineID), api: api) {
-            try await api.send(text, threadID: self.thread.id, offlineID: offlineID)
+            try await self.source(api).send(text, threadID: self.thread.id, offlineID: offlineID)
         }
     }
 
@@ -942,7 +1068,7 @@ final class ConversationModel {
         )
         preparedVoice[pending.id] = recording
         await deliver(pending, api: api) {
-            try await api.sendVoice(pcm: recording.url, threadID: self.thread.id, offlineID: offlineID)
+            try await self.source(api).sendVoice(pcm: recording.url, threadID: self.thread.id, offlineID: offlineID)
         }
         if messages.first(where: { $0.id == pending.id })?.failed != true { preparedVoice[pending.id] = nil }
     }
@@ -954,25 +1080,13 @@ final class ConversationModel {
         )
         preparedMedia[pending.id] = media
         await deliver(pending, api: api) {
-            try await api.sendMedia(media.data, mimeType: media.mimeType, threadID: self.thread.id, offlineID: offlineID)
+            try await self.source(api).sendMedia(media.data, mimeType: media.mimeType, threadID: self.thread.id, offlineID: offlineID)
         }
         if messages.first(where: { $0.id == pending.id })?.failed != true { preparedMedia[pending.id] = nil }
     }
 
-    #if DEBUG
-    /// The stand-in conversation's (-standInConversations YES): what it's given to send shows
-    /// as sent and goes nowhere.
-    var sendsNothing = false
-    #endif
-
     private func deliver(_ pending: DirectMessage, api: InstagramAPI, sending: () async throws -> SentMessage) async {
         messages.append(pending)
-        #if DEBUG
-        if sendsNothing {
-            messages[messages.count - 1].confirmedID = ""
-            return
-        }
-        #endif
         do {
             let sent = try await sending()
             if let index = messages.firstIndex(where: { $0.id == pending.id }) {
@@ -984,7 +1098,7 @@ final class ConversationModel {
             // Like the website, mark the conversation read up to what you just sent.
             if let longID = thread.threadId, let messageID = sent.messageId, let timestamp = sent.timestampMs {
                 markedRead = messageID
-                try? await api.markRead(threadID: longID, messageID: messageID, timestampMs: timestamp)
+                _ = try? await source(api).markRead(threadID: longID, messageID: messageID, timestampMs: timestamp)
             }
         } catch {
             // Still here unless Instagram's copy turned up with it meanwhile (see `merge`).
@@ -1009,19 +1123,39 @@ final class ConversationModel {
         }
     }
 
-    /// Something new from someone else: mark it read, as the website does while you look at it,
-    /// and only then. If that doesn't reach Instagram, the next look tries again.
+    /// The latest message from someone else among those on screen, when you haven't read up to
+    /// it: marked read, as the website does while you look at the conversation, and only then.
+    /// The website marks with that message's `id` and the conversation's long ID. If it doesn't
+    /// reach Instagram, the next look tries again; if Instagram answers without marking, three
+    /// tries at most.
     private func markReadIfNeeded(api: InstagramAPI) async {
-        guard isOnScreen, thread.isUnread, let longID = thread.threadId, let last = thread.lastMessage,
-              let messageID = last.messageId, let timestamp = last.timestampMs,
-              markedRead != messageID, markingRead != messageID
+        guard isOnScreen, let longID = thread.threadId,
+              let latest = messages.last(where: { !$0.isPending && $0.senderFbid != thread.viewerFbid }),
+              let timestamp = latest.timestampMs, let sent = latest.timestamp,
+              thread.markedAsUnread == true || sent > thread.readUpTo,
+              markedRead != latest.id, markingRead != latest.id
         else { return }
-        markingRead = messageID
+        markingRead = latest.id
         defer { markingRead = nil }
-        if (try? await api.markRead(threadID: longID, messageID: messageID, timestampMs: timestamp)) != nil {
-            markedRead = messageID
+        let threadID = thread.id
+        inbox?.markingRead(threadID, upTo: sent)
+        guard let took = try? await source(api).markRead(threadID: longID, messageID: latest.id, timestampMs: timestamp) else {
+            inbox?.markNotTaken(threadID, upTo: sent)
+            return
+        }
+        if !took { inbox?.markNotTaken(threadID, upTo: sent) }
+        unansweredMarks = took ? 0 : unansweredMarks + 1
+        if took || unansweredMarks >= 3 {
+            markedRead = latest.id
+            unansweredMarks = 0
         }
     }
+
+    /// Times in a row Instagram answered a read mark without marking anything.
+    private var unansweredMarks = 0
+
+    /// The inbox, whose row shows the conversation read while a mark is on its way.
+    @ObservationIgnored weak var inbox: InboxModel?
 
     /// Adds the latest messages to the ones already shown, and drops pending ones Instagram now has.
     private func merge(_ latest: [DirectMessage]) {
@@ -1043,7 +1177,23 @@ final class ConversationModel {
             message.isPending && !arrived.contains(message.confirmedID ?? "")
                 && message.offlineThreadingId.map { arrivedOffline.contains($0) } != true
         }
-        messages = byID.values.sorted { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) } + stillPending
+        // Instagram's copy takes over the row of the message it replaces (see `rows`), and the
+        // photo it was shown with, so the picture doesn't blink while Instagram's own loads.
+        for sent in messages where sent.isPending {
+            guard let copy = latest.first(where: { copy in
+                copy.id == sent.confirmedID
+                    || (copy.offlineThreadingId != nil && copy.offlineThreadingId == sent.offlineThreadingId)
+            }) else { continue }
+            sentRows[copy.id] = rowID(of: sent)
+            if let photo = sent.localMedia?.image, let shown = copy.attachments.first?.previewURL {
+                ImageCache.shared.seed(photo, for: shown)
+            }
+        }
+        // By time, and by ID where two share one: the same order at every refresh.
+        messages = byID.values.sorted {
+            let (first, second) = ($0.timestamp ?? 0, $1.timestamp ?? 0)
+            return first != second ? first < second : $0.id < $1.id
+        } + stillPending
         // Hearts on their way stay as you set them, whatever this copy says.
         if let me = thread.viewerFbid {
             for (id, on) in pendingHearts { setHeart(on, messageID: id, me: me) }
@@ -1069,7 +1219,7 @@ final class ConversationModel {
         pendingHearts[message.id] = adding
         Task {
             do {
-                try await api.react(emoji, to: messageID, threadID: thread.id, adding: adding)
+                try await source(api).react(emoji, to: messageID, threadID: thread.id, adding: adding)
             } catch {
                 setHeart(!adding, messageID: message.id, me: me)
                 self.error = ShownError(error)
@@ -1087,36 +1237,20 @@ final class ConversationModel {
 
 // MARK: - Messages
 
-private struct MessageRow: View {
-    let message: DirectMessage
-    let previous: DirectMessage?
-    let next: DirectMessage?
-    let thread: DirectThread
-    let status: ConversationModel.DeliveryStatus?
-    let open: (MediaItem) -> Void
-    let handOff: (DirectMessage) -> Void
-    let heart: () -> Void
-    let retry: () -> Void
+/// A message's row in the list: the message, with the time above it, whose it is and where
+/// it is on its way, as the conversation worked them out (`ConversationModel.Row`).
+struct MessageRow: View {
+    let row: ConversationModel.Row
+    let actions: MessageActions
+    let voice: VoicePlayer
+    /// The reaction pill's size as your heart goes on.
+    @State private var heartPop: CGFloat = 1
 
-    private var isMine: Bool { message.senderFbid == thread.viewerFbid }
-    private var hasMyHeart: Bool { message.reactions.contains { $0.senderFbid == thread.viewerFbid } }
-    private var sender: User? { thread.people.first { $0.interopMessagingUserFbid == message.senderFbid } }
-
-    /// Their avatar goes next to the last message of a run.
-    private var endsRun: Bool {
-        guard let next, next.notice == nil else { return true }
-        return next.senderFbid != message.senderFbid || (next.timestamp ?? 0) - (message.timestamp ?? 0) > 300_000
-    }
-
-    /// A time between messages more than half an hour apart.
-    private var startsSection: Bool {
-        guard let previous else { return true }
-        return (message.timestamp ?? 0) - (previous.timestamp ?? 0) > 1_800_000
-    }
+    private var message: DirectMessage { row.message }
 
     var body: some View {
         VStack(spacing: 3) {
-            if startsSection, let date = message.date {
+            if let date = row.date {
                 Text(date.formatted(date: .abbreviated, time: .shortened).uppercased())
                     .font(Theme.font(11, .medium))
                     .foregroundStyle(Theme.secondary)
@@ -1130,36 +1264,60 @@ private struct MessageRow: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
             } else {
-                if thread.isGroup == true, !isMine, previous?.senderFbid != message.senderFbid {
-                    Text(sender?.username ?? message.sender?.name ?? "")
+                if let name = row.senderName {
+                    Text(name)
                         .font(Theme.font(11))
                         .foregroundStyle(Theme.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, 40)
                 }
                 HStack(alignment: .bottom, spacing: 8) {
-                    if isMine {
+                    if row.isMine {
                         Spacer(minLength: 56)
                     } else {
-                        Avatar(url: sender?.avatarURL ?? message.sender?.userDict?.avatarURL, size: 26)
-                            .opacity(endsRun ? 1 : 0)
+                        // Their avatar goes next to the last message of a run.
+                        Avatar(url: row.avatar, size: 26)
+                            .opacity(row.endsRun ? 1 : 0)
                     }
-                    VStack(alignment: isMine ? .trailing : .leading, spacing: -5) {
-                        MessageContent(message: message, isMine: isMine, thread: thread, open: open, handOff: handOff, heart: heart)
+                    VStack(alignment: row.isMine ? .trailing : .leading, spacing: -5) {
+                        MessageContent(row: row, actions: actions, voice: voice)
                         if !message.reactions.isEmpty {
+                            // Pops in when your heart goes on, from where it's anchored. Not an
+                            // insertion transition: the row is in a cell the list reuses, and a
+                            // transition started there can stop at its first frame, invisible.
                             ReactionPill(reactions: message.reactions)
+                                .scaleEffect(heartPop, anchor: row.isMine ? .topTrailing : .topLeading)
                                 .padding(.horizontal, 8)
-                                .transition(.scale(scale: 0.3, anchor: isMine ? .topTrailing : .topLeading).combined(with: .opacity))
                         }
                     }
-                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: message.reactions)
-                    .sensoryFeedback(.impact(weight: .light), trigger: hasMyHeart) { _, on in on }
-                    if !isMine { Spacer(minLength: 56) }
+                    .sensoryFeedback(.impact(weight: .light), trigger: row.hasMyHeart) { _, on in on }
+                    .onChange(of: row.hasMyHeart) { _, on in
+                        guard on else { return }
+                        heartPop = 0.3
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { heartPop = 1 }
+                    }
+                    if !row.isMine { Spacer(minLength: 56) }
                 }
-                if let status { statusLine(status) }
+                if let status = row.status { statusLine(status) }
             }
         }
+        // The whole width, whatever the row holds: the list places rows, not their content.
+        .frame(maxWidth: .infinity)
     }
+
+    /// The pictures a row shows, for the list to read ahead of rows about to scroll in. None
+    /// from a view-once message: those are never loaded ahead.
+    static func pictures(in row: ConversationModel.Row) -> [URL] {
+        let message = row.message
+        guard !message.isViewOnce else { return [] }
+        var pictures = message.attachments.filter { $0.kind != .audio }.compactMap(\.previewURL)
+        if let preview = message.card?.previewImage?.url.flatMap(URL.init(string:)) { pictures.append(preview) }
+        if !row.isMine, row.endsRun, let avatar = row.avatar { pictures.append(avatar) }
+        return pictures
+    }
+
+    /// The largest a picture shows in a row, in points: what pictures read ahead are made to fit.
+    static let largestPicture = CGSize(width: 240, height: 430)
 }
 
 private extension MessageRow {
@@ -1176,7 +1334,7 @@ private extension MessageRow {
             case .seen:
                 Text("Seen")
             case .failed:
-                Button(action: retry) {
+                Button { actions.handlers.retry(message) } label: {
                     Text("Not sent · Tap to retry").foregroundStyle(Theme.like)
                 }
                 .buttonStyle(.plain)
@@ -1203,24 +1361,27 @@ private struct StatusLabelStyle: LabelStyle {
 /// A message's text, photos, videos, voice message or share. A double-tap anywhere puts your
 /// heart on it, or takes it off.
 private struct MessageContent: View {
-    let message: DirectMessage
-    let isMine: Bool
-    let thread: DirectThread
-    let open: (MediaItem) -> Void
-    let handOff: (DirectMessage) -> Void
-    let heart: () -> Void
+    let row: ConversationModel.Row
+    let actions: MessageActions
+    let voice: VoicePlayer
+
+    private var message: DirectMessage { row.message }
+    private var isMine: Bool { row.isMine }
+
+    private func open(_ item: MediaItem) { actions.handlers.open(item) }
+    private func heart() { actions.handlers.heart(message) }
 
     var body: some View {
         if let local = message.localMedia {
             LocalMediaView(media: local)
         } else if let local = message.localAudio {
-            AudioBubble(url: local.url, durationMs: local.duration * 1000, levels: local.levels, isMine: isMine)
+            AudioBubble(id: row.id, url: local.url, durationMs: local.duration * 1000, levels: local.levels, isMine: isMine, voice: voice)
         } else if message.isViewOnce, !isMine || message.attachments.isEmpty {
             // Someone else's view-once photo or video opens only in Instagram's app, even if
             // Instagram's copy ever came with it. Yours shows here when it does, as on the website.
-            ViewOnceBubble(message: message, isMine: isMine, open: { handOff(message) }, heart: heart)
+            ViewOnceBubble(message: message, isMine: isMine, open: { actions.handlers.handOff(message) }, heart: heart)
         } else if let audio = message.attachments.first(where: { $0.kind == .audio }) {
-            AudioBubble(url: audio.url, durationMs: audio.playableDurationMs, levels: audio.waveform, isMine: isMine)
+            AudioBubble(id: row.id, url: audio.url, durationMs: audio.playableDurationMs, levels: audio.waveform, isMine: isMine, voice: voice)
                 .onTapGesture(count: 2, perform: heart)
         } else if !message.attachments.isEmpty {
             VStack(alignment: isMine ? .trailing : .leading, spacing: 3) {
@@ -1236,7 +1397,10 @@ private struct MessageContent: View {
         } else if message.isStoryReply, let card = message.card {
             StoryReplyView(message: message, card: card, isMine: isMine, open: open, heart: heart)
         } else if let card = message.card {
-            ShareCard(card: card, text: message.cardText, open: open, heart: heart)
+            ShareCard(
+                card: card, text: message.cardText, open: open, heart: heart,
+                navigate: { actions.handlers.navigate($0) }, openURL: { actions.handlers.openURL($0) }
+            )
         } else if let text = message.textBody, !text.isEmpty {
             Text(text)
                 .font(Theme.font(15))
@@ -1253,7 +1417,7 @@ private struct MessageContent: View {
             PreviewPlaceholder(message: message)
         } else {
             // Something the app can't show yet: the website can.
-            NavigationLink(value: Route.web(path: "/direct/t/\(thread.id)/", title: thread.title)) {
+            Button { actions.handlers.showOnWebsite() } label: {
                 HStack(spacing: 6) {
                     Text(message.summary)
                     Image(systemName: "arrow.up.forward").font(.system(size: 11, weight: .semibold))
@@ -1436,8 +1600,10 @@ private struct ShareCard: View {
     let text: String?
     let open: (MediaItem) -> Void
     let heart: () -> Void
-    @Environment(\.navigate) private var navigate
-    @Environment(\.openURL) private var openURL
+    /// A row in the list is on its own, without the screen's environment: the screen's way to
+    /// another screen and to Safari are handed to it.
+    let navigate: (Route) -> Void
+    let openURL: (URL) -> Void
 
     private enum Destination {
         case post(code: String)
@@ -1675,16 +1841,16 @@ private struct LocalMediaView: View {
 }
 
 /// A voice message: play and pause in place, with its waveform filling in as it plays and the
-/// time left.
+/// time left. The conversation's player does the playing (VoicePlayer): the bubble shows where
+/// it is when the message is the one playing.
 private struct AudioBubble: View {
+    /// The row's ID, which the player knows the message by.
+    let id: String
     let url: URL?
     let durationMs: Double?
     let levels: [Double]?
     let isMine: Bool
-    @State private var player: AVPlayer?
-    @State private var observer: Any?
-    @State private var isPlaying = false
-    @State private var position: Double = 0
+    let voice: VoicePlayer
 
     /// Seconds; none when the length given isn't a number, or is endless.
     private var duration: Double {
@@ -1693,8 +1859,12 @@ private struct AudioBubble: View {
     }
 
     var body: some View {
+        // Only the bubble of the message that's playing follows the player's progress.
+        let isCurrent = voice.current == id
+        let isPlaying = isCurrent && voice.isPlaying
+        let position = isCurrent ? voice.position : 0
         HStack(spacing: 10) {
-            Button(action: toggle) {
+            Button { voice.toggle(id, url: url) } label: {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
@@ -1705,7 +1875,7 @@ private struct AudioBubble: View {
             .accessibilityLabel(isPlaying ? "Pause voice message" : "Play voice message")
             Waveform(levels: levels, progress: duration > 0 ? position / duration : 0)
                 .frame(width: 128, height: 26)
-            Text(timeLabel)
+            Text(timeLabel(playing: isPlaying, position: position))
                 .font(Theme.font(12))
                 .monospacedDigit()
                 .foregroundStyle(Theme.secondary)
@@ -1714,50 +1884,67 @@ private struct AudioBubble: View {
         .padding(.trailing, 14)
         .padding(.vertical, 7)
         .bubble(isMine: isMine)
-        .onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification)) { note in
-            guard let item = note.object as? AVPlayerItem, item === player?.currentItem else { return }
-            isPlaying = false
-            position = 0
-            player?.seek(to: .zero)
-        }
-        .onDisappear(perform: stop)
     }
 
     /// The time left while playing, the length otherwise. A time too long to count in seconds
     /// reads 0:00, where turning it into a whole number would stop the app.
-    private var timeLabel: String {
-        let seconds = Int(exactly: (isPlaying || position > 0 ? max(duration - position, 0) : duration).rounded()) ?? 0
+    private func timeLabel(playing: Bool, position: Double) -> String {
+        let seconds = Int(exactly: (playing || position > 0 ? max(duration - position, 0) : duration).rounded()) ?? 0
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
+}
 
-    private func toggle() {
-        if isPlaying {
-            player?.pause()
-            isPlaying = false
+/// Plays the conversation's voice messages, one at a time. It belongs to the screen, not to a
+/// row: a message goes on playing while its row scrolls away, and its bubble shows where it is
+/// when it scrolls back.
+@MainActor
+@Observable
+final class VoicePlayer {
+    /// The row of the message that's playing, or paused part-way.
+    private(set) var current: String?
+    private(set) var isPlaying = false
+    /// Seconds into it.
+    private(set) var position: Double = 0
+    @ObservationIgnored private var player: AVPlayer?
+    @ObservationIgnored private var ticks: Any?
+    @ObservationIgnored private var ended: NSObjectProtocol?
+
+    /// Plays the message, or pauses it if it's the one playing. Another one playing stops.
+    func toggle(_ id: String, url: URL?) {
+        if current == id, let player {
+            if isPlaying { player.pause() } else { player.play() }
+            isPlaying.toggle()
             return
         }
         // A voice message being sent plays from the phone; one received only from Instagram's
         // servers (MediaHosts).
         guard let url, url.isFileURL || MediaHosts.allows(url) else { return }
-        let player = self.player ?? AVPlayer(url: url)
-        if self.player == nil {
-            self.player = player
-            observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { time in
-                // A time the player can't tell reads as NaN: the last one stays.
-                guard time.seconds.isFinite else { return }
-                MainActor.assumeIsolated { position = time.seconds }
-            }
+        stop()
+        let player = AVPlayer(url: url)
+        self.player = player
+        ticks = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { [weak self] time in
+            // A time the player can't tell reads as NaN: the last one stays.
+            guard time.seconds.isFinite else { return }
+            MainActor.assumeIsolated { self?.position = time.seconds }
         }
-        player.play()
+        ended = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification, object: player.currentItem, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop() }
+        }
+        current = id
+        position = 0
         isPlaying = true
+        player.play()
     }
 
-    private func stop() {
+    /// Stops what's playing, back to its start: when it ends, and when you leave the conversation.
+    func stop() {
         player?.pause()
-        if let observer { player?.removeTimeObserver(observer) }
-        observer = nil
-        player = nil
-        isPlaying = false
+        if let ticks { player?.removeTimeObserver(ticks) }
+        if let ended { NotificationCenter.default.removeObserver(ended) }
+        (ticks, ended, player) = (nil, nil, nil)
+        (current, isPlaying, position) = (nil, false, 0)
     }
 }
 
@@ -1796,13 +1983,16 @@ private struct Waveform: View {
 /// A GIF or sticker: loops silently, as in the app.
 private struct AnimatedMediaView: View {
     let attachment: DirectMessage.Attachment
+    /// The row is on screen. A row that scrolled away stays alive to be used again: its GIF
+    /// shouldn't go on playing there.
+    @Environment(CellDisplay.self) private var display: CellDisplay?
 
     var body: some View {
         let ratio = min(max(attachment.aspectRatio ?? 1, 0.56), 1.8)
         let width: CGFloat = attachment.isSticker == true ? 140 : 200
         Group {
             if let video = attachment.attachmentMp4Url.flatMap(URL.init(string:)), MediaHosts.allows(video) {
-                LoopingVideo(url: video)
+                LoopingVideo(url: video, isPaused: display?.isShown == false)
             } else {
                 RemoteImage(attachment.previewURL)
             }
@@ -1816,12 +2006,15 @@ private struct AnimatedMediaView: View {
 /// A short silent video playing on a loop, for GIFs.
 struct LoopingVideo: UIViewRepresentable {
     let url: URL
+    var isPaused = false
 
     func makeUIView(context: Context) -> LoopingPlayerView {
         LoopingPlayerView(url: url)
     }
 
-    func updateUIView(_ view: LoopingPlayerView, context: Context) {}
+    func updateUIView(_ view: LoopingPlayerView, context: Context) {
+        view.setPaused(isPaused)
+    }
 
     static func dismantleUIView(_ view: LoopingPlayerView, coordinator: ()) {
         view.stop()
@@ -1843,6 +2036,10 @@ struct LoopingVideo: UIViewRepresentable {
         }
 
         required init?(coder: NSCoder) { nil }
+
+        func setPaused(_ paused: Bool) {
+            if paused { player.pause() } else if player.rate == 0 { player.play() }
+        }
 
         func stop() {
             player.pause()

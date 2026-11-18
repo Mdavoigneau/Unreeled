@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import UIKit
 
 /// Whose saved copies the app reads and keeps: the account logged in, which Session sets as the
 /// login changes, and nil while there's none, when nothing is read or kept. Each account's copies
@@ -210,6 +211,13 @@ final class ImageFiles: @unchecked Sendable {
     private func file(for key: String) -> URL {
         folder.appending(path: CacheFolder.name(for: key))
     }
+
+    #if DEBUG
+    /// A stand-in conversation's picture, put where a downloaded one would be (StandIn).
+    func keep(_ data: Data, for url: URL) {
+        try? data.write(to: file(for: Self.key(for: url)), options: .atomic)
+    }
+    #endif
 }
 
 /// Story photos and videos as files, loaded ahead so stories open and play at once. Stories last a
@@ -291,8 +299,15 @@ final class StoryFiles: @unchecked Sendable {
             return task
         }
         let file = await task.value
-        lock.withLock { downloads[key] = nil }
+        lock.withLock { if downloads[key] == task { downloads[key] = nil } }
         return file
+    }
+
+    /// Stops a download of this file under way: the viewer is streaming it instead, and the
+    /// two would share the connection.
+    func cancelDownload(_ url: URL) {
+        let key = ImageFiles.key(for: url)
+        lock.withLock { downloads[key] }?.cancel()
     }
 
     /// A story photo's bytes: from the phone, or downloaded onto it when `download` allows.
@@ -485,6 +500,85 @@ enum ThreadStore {
     private static func touch(_ id: String) {
         order.removeAll { $0 == id }
         order.append(id)
+    }
+}
+
+/// What you've typed in a conversation and not sent, so it's still in the field when you come
+/// back to it: after leaving the conversation, and after the app was closed or iOS ended it in
+/// the background. Kept with the saved copies (ResponseCache): on this phone, out of its
+/// backups, each account's its own, until it's sent or deleted, and gone when the login ends.
+@MainActor
+enum Drafts {
+    private struct Draft: Codable {
+        var text: String
+        var at: Date
+    }
+
+    private static let key = "kept-drafts"
+    /// The most conversations with something unsent; past that, the oldest go.
+    private static let most = 40
+    private static var drafts: [String: Draft] = [:]
+    /// Whose `drafts` are, once read from the phone.
+    private static var account: String?
+    private static var isLoaded = false
+    private static var saving: Task<Void, Never>?
+    private static var observer: NSObjectProtocol?
+
+    static func text(for conversation: String) -> String? {
+        load()
+        return drafts[conversation]?.text
+    }
+
+    static func keep(_ text: String, for conversation: String) {
+        load()
+        guard (drafts[conversation]?.text ?? "") != text else { return }
+        drafts[conversation] = text.isEmpty ? nil : Draft(text: text, at: .now)
+        if drafts.count > most {
+            for (id, _) in drafts.sorted(by: { $0.value.at < $1.value.at }).prefix(drafts.count - most) { drafts[id] = nil }
+        }
+        // Sent or deleted: off the phone at once. While typing: when it pauses.
+        saving?.cancel()
+        if text.isEmpty { return save() }
+        saving = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            if !Task.isCancelled { save() }
+        }
+    }
+
+    /// The login ended: its drafts go from memory, as their file goes with the saved copies.
+    static func removeAll() {
+        saving?.cancel()
+        drafts = [:]
+        account = nil
+        isLoaded = false
+    }
+
+    /// Reads the drafts of the account logged in, once, and again for another account.
+    private static func load() {
+        let current = SavedCopies.account
+        guard !isLoaded || account != current else { return }
+        saving?.cancel()
+        account = current
+        isLoaded = true
+        drafts = ResponseCache.shared.data(for: key).flatMap { try? JSONDecoder().decode([String: Draft].self, from: $0) } ?? [:]
+        // Leaving the app in the middle of a word: what's typed is written before iOS can end the app.
+        if observer == nil {
+            observer = NotificationCenter.default.addObserver(
+                forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+            ) { _ in
+                MainActor.assumeIsolated {
+                    guard saving != nil else { return }
+                    saving?.cancel()
+                    save()
+                }
+            }
+        }
+    }
+
+    private static func save() {
+        saving = nil
+        guard let data = try? JSONEncoder().encode(drafts) else { return }
+        ResponseCache.shared.store(data, for: key, account: account)
     }
 }
 

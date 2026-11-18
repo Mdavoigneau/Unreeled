@@ -316,6 +316,9 @@ struct DirectThread: Decodable, Hashable, Identifiable {
     let threadFbid: String?
     /// The long ID that read receipts use.
     let threadId: String?
+    /// A third ID Instagram has for it: for a conversation with one person, that person's ID in
+    /// Direct; for a group, the same as `threadFbid`.
+    let threadKey: String?
     let threadTitle: String?
     let isGroup: Bool?
     var markedAsUnread: Bool?
@@ -327,6 +330,9 @@ struct DirectThread: Decodable, Hashable, Identifiable {
     var slideReadReceipts: [ReadReceipt]?
 
     var id: String { threadFbid ?? threadId ?? "" }
+    /// Every ID Instagram knows the conversation by. A notification names its conversation by
+    /// one of them, and whichever it is has to find the conversation.
+    var ids: Set<String> { Set([threadId, threadFbid, threadKey].compactMap { $0 }.filter { !$0.isEmpty }) }
     var people: [User] { users?.elements ?? [] }
     var viewerFbid: String? { viewer?.interopMessagingUserFbid }
     var lastMessage: DirectMessage? { slideMessages?.nodes.first }
@@ -337,12 +343,16 @@ struct DirectThread: Decodable, Hashable, Identifiable {
         return people.map(\.displayName).joined(separator: ", ")
     }
 
+    /// The time you've read the conversation up to, in milliseconds: 0 when Instagram has none.
+    var readUpTo: Double {
+        slideReadReceipts?.first { $0.participantFbid == viewerFbid }?.watermarkTimestampMs.flatMap(Double.init) ?? 0
+    }
+
     /// The newest message is from someone else and you haven't read it.
     var isUnread: Bool {
         if markedAsUnread == true { return true }
         guard let last = lastMessage, last.senderFbid != viewerFbid, let sent = last.timestamp else { return false }
-        let read = slideReadReceipts?.first { $0.participantFbid == viewerFbid }?.watermarkTimestampMs.flatMap(Double.init) ?? 0
-        return sent > read
+        return sent > readUpTo
     }
 
     /// The same conversation, read by you up to its newest message.

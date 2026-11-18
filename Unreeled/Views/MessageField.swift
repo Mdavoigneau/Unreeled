@@ -12,7 +12,14 @@ final class MessageDraft {
     /// There's something to send: more than spaces and line breaks.
     private(set) var hasText = false
 
+    /// The conversation it's for. What's typed there and not sent is kept (Drafts), and is back
+    /// in the field the next time the conversation opens.
+    @ObservationIgnored private let conversation: String?
     @ObservationIgnored private weak var view: MessageTextView?
+
+    init(conversation: String? = nil) {
+        self.conversation = conversation.flatMap { $0.isEmpty ? nil : $0 }
+    }
 
     /// The message as typed, for sending. The field is emptied at once and keeps the keyboard.
     func take() -> String {
@@ -24,17 +31,21 @@ final class MessageDraft {
 
     fileprivate func attach(_ view: MessageTextView) {
         self.view = view
-        // A new field starts empty. Said a moment later: views aren't to be changed while
-        // SwiftUI is making them.
-        if hasText {
+        // What was typed here and not sent, back where it was.
+        if let conversation, let kept = Drafts.text(for: conversation) { view.restore(kept) }
+        // Said a moment later: views aren't to be changed while SwiftUI is making them.
+        let hasText = !view.typedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hasText != self.hasText {
             Task { self.follow(view) }
         }
     }
 
     fileprivate func follow(_ view: MessageTextView) {
         guard view === self.view else { return }
-        let hasText = !view.typedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let typed = view.typedText
+        let hasText = !typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hasText != self.hasText { self.hasText = hasText }
+        if let conversation { Drafts.keep(typed, for: conversation) }
     }
 }
 
@@ -131,6 +142,15 @@ final class MessageTextView: UITextView {
     func empty() {
         text = ""
         textChanged()
+    }
+
+    /// Puts back what was typed here before, in a field just made. Nothing was typed, so
+    /// nothing is said to have changed.
+    func restore(_ kept: String) {
+        text = kept
+        prompt.isHidden = !kept.isEmpty
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
     }
 
     func textChanged() {

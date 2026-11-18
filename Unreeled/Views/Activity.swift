@@ -74,8 +74,11 @@ struct ActivityLog: Codable {
     var items: [ActivityItem] = []
     var requests: [User] = []
 
-    static func saved() -> ActivityLog? {
-        ResponseCache.shared.data(for: key).flatMap { try? InstagramAPI.decodeSaved(ActivityLog.self, from: $0) }
+    /// Read off the main thread: up to a quarter of a megabyte, as the tab opens.
+    static func saved() async -> ActivityLog? {
+        await Task.detached(priority: .userInitiated) {
+            ResponseCache.shared.data(for: key).flatMap { try? InstagramAPI.decodeSaved(ActivityLog.self, from: $0) }
+        }.value
     }
 
     /// Kept for `account`, the one logged in when Instagram's latest were asked for.
@@ -110,6 +113,8 @@ final class ActivityModel {
 
     private(set) var items: [ActivityItem] = []
     private(set) var requests: [User] = []
+    /// The items by when they came, worked out as they change rather than at every redraw.
+    private(set) var sections: [Section] = []
     private(set) var isLoading = false
     private(set) var hasLoaded = false
     private(set) var error: ShownError?
@@ -118,7 +123,7 @@ final class ActivityModel {
 
     func load(api: InstagramAPI, force: Bool) async {
         // The kept notifications at once; Instagram's latest join them when they come.
-        if log == nil, let saved = ActivityLog.saved() {
+        if log == nil, let saved = await ActivityLog.saved(), log == nil {
             log = saved
             show(saved)
         }
@@ -144,10 +149,11 @@ final class ActivityModel {
         var seen = Set<String>()
         items = log.items.filter { seen.insert($0.text).inserted }
         requests = log.requests
+        sections = Self.sections(of: items)
     }
 
     /// Today, Yesterday, This Week, This Month, Earlier: the ones that have something.
-    var sections: [Section] {
+    private static func sections(of items: [ActivityItem]) -> [Section] {
         let calendar = Calendar.current
         let now = Date.now
         func bucket(_ date: Date?) -> String {

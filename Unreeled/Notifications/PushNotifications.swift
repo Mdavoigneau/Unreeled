@@ -640,6 +640,18 @@ extension PushNotifications {
             }
         }
     }
+
+    /// Debug builds launched with `-openThread <conversation ID>` act, each time the app comes
+    /// to the front, as if a notification about a message in that conversation had been tapped:
+    /// where a tap leads, from a launch and from the background, without a push.
+    func startTapTest() {
+        guard let thread = UserDefaults.standard.string(forKey: "openThread") else { return }
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                PushNotifications.shared.opened = InstagramPush.Routing.tapped(thread: thread)
+            }
+        }
+    }
     #endif
 
     /// A notification about a reply that didn't go, which offers Reply again.
@@ -664,7 +676,7 @@ extension PushNotifications {
 
 extension PushNotifications {
     /// Takes a conversation's notifications out of Notification Centre: it's open, and shows
-    /// their messages itself. `threads` are its IDs, in either of Instagram's two forms.
+    /// their messages itself. `threads` are its IDs, in each of Instagram's forms.
     func clearDelivered(threads: Set<String>) {
         guard !threads.isEmpty else { return }
         Task {
@@ -786,6 +798,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().setNotificationCategories(PushNotifications.categories)
         #if DEBUG
         PushNotifications.shared.startReplyTest()
+        PushNotifications.shared.startTapTest()
+        FrameMeter.startIfRequested()
         #endif
         return true
     }

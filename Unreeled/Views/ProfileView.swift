@@ -248,6 +248,11 @@ final class ProfileModel {
     private var ownerID: String?
     /// When Instagram's copy last came.
     private var loadedAt: Date?
+    /// The next page of posts is on its way.
+    private var isLoadingPage = false
+    /// Posts near the end came on screen while the profile itself was loading: their page
+    /// follows once it's in.
+    private var wantsNextPage = false
 
     /// Instagram's copy is more than five minutes old, or hasn't come since launch.
     var isStale: Bool {
@@ -270,14 +275,28 @@ final class ProfileModel {
     func load(id: String, username: String?, viewerID: String?, isOwn: Bool, api: InstagramAPI) async {
         // As it was last time, at once; Instagram's copy replaces it.
         if profile == nil, isOwn { await showSaved(userID: viewerID, api: api) }
-        if profile == nil, let saved = api.cachedProfile(id: id) {
-            profile = saved
-            if !saved.isLocked(for: viewerID), let page = api.cachedPosts(ownerID: id) { show(page, of: id) }
+        if profile == nil {
+            // Read off the main thread, both at once: the screen slides in meanwhile, and they're
+            // there a moment later, long before Instagram's copy.
+            async let savedProfile = api.savedProfile(id: id)
+            async let savedPosts = api.savedPosts(ownerID: id)
+            let (saved, page) = await (savedProfile, savedPosts)
+            if profile == nil, let saved {
+                profile = saved
+                if !saved.isLocked(for: viewerID), let page { show(page, of: id) }
+            }
         }
         // Header and posts at once, when the username is known: given, or your saved profile's.
         let username = username ?? (isOwn ? profile?.username : nil)
         isLoading = true
-        defer { isLoading = false }
+        var isFresh = false
+        defer {
+            isLoading = false
+            // The posts near the end were on screen already, as when the saved copy showed
+            // first: they won't come on screen again to ask for their page.
+            if wantsNextPage, isFresh { loadNextPage(api: api) }
+            wantsNextPage = false
+        }
         do {
             if let username {
                 async let fresh = api.profile(id: id, keep: isOwn)
@@ -304,20 +323,38 @@ final class ProfileModel {
             }
             loadedAt = .now
             error = nil
+            isFresh = true
         } catch {
             if profile?.isLocked(for: viewerID) != true { self.error = ShownError(error) }
         }
     }
 
+    /// The next page, once `post` is among the last six.
     func loadMore(near post: Media, api: InstagramAPI) {
-        guard !isLoading, let cursor, let username = profile?.username, let ownerID,
-              let index = posts.firstIndex(where: { $0.id == post.id }), index >= posts.count - 6
-        else { return }
+        guard let index = posts.firstIndex(where: { $0.id == post.id }), index >= posts.count - 6 else { return }
+        if isLoading, !isLoadingPage {
+            wantsNextPage = true
+        } else {
+            loadNextPage(api: api)
+        }
+    }
+
+    /// One request for each page. A row's posts come on screen together and each one asks, so
+    /// the page is marked as on its way here, before its request starts: asked that way from
+    /// inside the task, every one of them sent its own copy of the request.
+    private func loadNextPage(api: InstagramAPI) {
+        guard !isLoading, !isLoadingPage, let cursor, let username = profile?.username, let ownerID else { return }
+        isLoadingPage = true
+        isLoading = true
         Task {
-            isLoading = true
-            defer { isLoading = false }
+            defer {
+                isLoadingPage = false
+                isLoading = false
+            }
             do {
                 let page = try await api.posts(username: username, ownerID: ownerID, cursor: cursor)
+                // Not onto a list that a refresh replaced meanwhile.
+                guard self.cursor == cursor, self.ownerID == ownerID else { return }
                 var seen = Set(posts.map(\.id))
                 posts += page.items.filter { InstagramAPI.isOwned($0, by: ownerID) && seen.insert($0.id).inserted }
                 self.cursor = page.cursor

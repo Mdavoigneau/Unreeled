@@ -20,36 +20,91 @@ enum MediaHosts {
     /// Larger than a picture or video of its kind can be.
     struct TooLarge: Error {}
 
-    /// Downloads `url` and hands its body to `take` in pieces as it comes, `limit` bytes in all at
+    /// Downloads `url` and hands its body to `take` in pieces as they come, `limit` bytes in all at
     /// most. `accept` looks at the response first: one it turns down is stopped before its body
     /// comes, and so is one that says it's larger than `limit`. One that turns out larger is
-    /// stopped there.
+    /// stopped there. The pieces are as the connection delivers them, tens of kilobytes each, on
+    /// the session's own queue, one at a time. Cancelling the task that waits for it stops the
+    /// download.
     static func download(
         _ url: URL, session: URLSession, limit: Int,
-        accept: (HTTPURLResponse) -> Bool, take: (Data) throws -> Void
+        accept: @escaping (HTTPURLResponse) -> Bool, take: @escaping (Data) throws -> Void
     ) async throws {
-        let (bytes, response) = try await session.bytes(from: url)
-        do {
-            guard let http = response as? HTTPURLResponse, accept(http) else { throw URLError(.badServerResponse) }
-            guard http.expectedContentLength <= Int64(limit) else { throw TooLarge() }
-            let pieceSize = 64 << 10
-            var piece = Data()
-            piece.reserveCapacity(pieceSize)
-            var total = 0
-            for try await byte in bytes {
-                piece.append(byte)
-                guard piece.count == pieceSize else { continue }
-                total += piece.count
-                guard total <= limit else { throw TooLarge() }
-                try take(piece)
-                piece.removeAll(keepingCapacity: true)
+        let receiver = Receiver(limit: limit, accept: accept, take: take)
+        let task = session.dataTask(with: url)
+        // The task's own delegate: the session's still decides where a redirect may lead.
+        task.delegate = receiver
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                receiver.start(task, continuation: continuation)
             }
-            total += piece.count
-            guard total <= limit else { throw TooLarge() }
-            if !piece.isEmpty { try take(piece) }
-        } catch {
-            bytes.task.cancel()
-            throw error
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    /// Takes a download's pieces as they arrive, and says how it ended.
+    private final class Receiver: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private let limit: Int
+        private let accept: (HTTPURLResponse) -> Bool
+        private let take: (Data) throws -> Void
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Error>?
+        // Only touched on the session's queue, one call at a time.
+        private var received = 0
+        private var failure: Error?
+
+        init(limit: Int, accept: @escaping (HTTPURLResponse) -> Bool, take: @escaping (Data) throws -> Void) {
+            self.limit = limit
+            self.accept = accept
+            self.take = take
+        }
+
+        func start(_ task: URLSessionDataTask, continuation: CheckedContinuation<Void, Error>) {
+            lock.withLock { self.continuation = continuation }
+            task.resume()
+        }
+
+        func urlSession(
+            _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            guard let http = response as? HTTPURLResponse, accept(http) else {
+                failure = URLError(.badServerResponse)
+                return completionHandler(.cancel)
+            }
+            guard http.expectedContentLength <= Int64(limit) else {
+                failure = TooLarge()
+                return completionHandler(.cancel)
+            }
+            completionHandler(.allow)
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            guard failure == nil else { return }
+            received += data.count
+            guard received <= limit else {
+                failure = TooLarge()
+                return dataTask.cancel()
+            }
+            do {
+                try take(data)
+            } catch {
+                failure = error
+                dataTask.cancel()
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            let continuation = lock.withLock { () -> CheckedContinuation<Void, Error>? in
+                defer { self.continuation = nil }
+                return self.continuation
+            }
+            if let failure = failure ?? error {
+                continuation?.resume(throwing: failure)
+            } else {
+                continuation?.resume()
+            }
         }
     }
 }

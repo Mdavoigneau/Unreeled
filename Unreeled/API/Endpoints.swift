@@ -89,9 +89,12 @@ extension InstagramAPI {
         return profile
     }
 
-    /// A profile as it was last loaded.
-    func cachedProfile(id: String) -> Profile? {
-        ResponseCache.shared.data(for: "profile-\(id)").flatMap { try? decode(Profile.self, from: $0) }
+    /// A profile as it was last loaded, read off the main thread: a screen opening isn't held up
+    /// by the file, nor by decoding it.
+    func savedProfile(id: String) async -> Profile? {
+        await Task.detached(priority: .userInitiated) {
+            ResponseCache.shared.data(for: "profile-\(id)").flatMap { try? InstagramAPI.decodeSaved(Profile.self, from: $0) }
+        }.value
     }
 
     private nonisolated static let keptProfileKey = "kept-profile"
@@ -145,13 +148,16 @@ extension InstagramAPI {
         return Page(items: posts.nodes, cursor: posts.nextCursor)
     }
 
-    /// The first posts of a profile as they were last loaded, by the profile's ID.
-    func cachedPosts(ownerID: String) -> Page<Media>? {
-        guard let data = ResponseCache.shared.data(for: "posts-\(ownerID)"),
-              let posts = try? decode(Connection<Media>.self, from: data),
-              posts.nodes.allSatisfy({ Self.isOwned($0, by: ownerID) })
-        else { return nil }
-        return Page(items: posts.nodes, cursor: posts.nextCursor)
+    /// The first posts of a profile as they were last loaded, by the profile's ID, read off the
+    /// main thread: a dozen posts with all their pictures' links take a moment to decode.
+    func savedPosts(ownerID: String) async -> Page<Media>? {
+        await Task.detached(priority: .userInitiated) { () -> Page<Media>? in
+            guard let data = ResponseCache.shared.data(for: "posts-\(ownerID)"),
+                  let posts = try? InstagramAPI.decodeSaved(Connection<Media>.self, from: data),
+                  posts.nodes.allSatisfy({ InstagramAPI.isOwned($0, by: ownerID) })
+            else { return nil }
+            return Page(items: posts.nodes, cursor: posts.nextCursor)
+        }.value
     }
 
     /// Whether a post is the account's with this ID, as far as the post says: a username can pass
@@ -214,10 +220,13 @@ extension InstagramAPI {
         return tray.tray?.elements ?? []
     }
 
-    /// The stories tray as it was last loaded.
-    func cachedStoriesTray() -> [Reel] {
-        guard let data = ResponseCache.shared.data(for: "tray") else { return [] }
-        return (try? decode(ReelsTray.self, from: data))?.tray?.elements ?? []
+    /// The stories tray as it was last loaded, read off the main thread: at launch, while the
+    /// first screen is being drawn.
+    func savedStoriesTray() async -> [Reel] {
+        await Task.detached(priority: .userInitiated) { () -> [Reel] in
+            guard let data = ResponseCache.shared.data(for: "tray") else { return [] }
+            return (try? InstagramAPI.decodeSaved(ReelsTray.self, from: data))?.tray?.elements ?? []
+        }.value
     }
 
     /// The stories of several accounts at once, by user ID, as the website loads them.
@@ -324,7 +333,9 @@ extension InstagramAPI {
         return Page(items: mailbox.threadsByFolder?.nodes.compactMap(\.asIgDirectThread) ?? [], cursor: mailbox.threadsByFolder?.nextCursor)
     }
 
-    /// A conversation with its latest messages. Reading it doesn't mark it read.
+    /// A conversation with its latest messages. Reading it doesn't mark it read. The query takes
+    /// the conversation's `thread_fbid` or its `thread_key` (for a conversation with one person,
+    /// that person's ID in Direct); for the long `thread_id` it answers with no conversation.
     func thread(id threadFbid: String) async throws -> DirectThread? {
         let account = SavedCopies.account
         let data = try await queryData(
@@ -398,18 +409,25 @@ extension InstagramAPI {
         if response?["success"] as? Bool == false { throw Failure.query("Instagram didn't take the reaction.") }
     }
 
-    /// Marks a conversation read up to a message, which shows the others you've seen it,
-    /// as the website does when you open a conversation or send in it.
-    func markRead(threadID longID: String, messageID: String, timestampMs: String) async throws {
-        #if DEBUG
-        NetworkRecorder.append(["time": Date().ISO8601Format(), "directMarkRead": longID])
-        #endif
+    /// Marks a conversation read up to a message, which shows the others you've seen it, as the
+    /// website does when you open a conversation or send in it: the conversation's long ID, and
+    /// the message's `id`. False when Instagram answered without the time you've now read up
+    /// to: it marked nothing.
+    func markRead(threadID longID: String, messageID: String, timestampMs: String) async throws -> Bool {
         let metadata = ["ig_thread_igid": longID]
-        _ = try await graphQL("useIGDMarkThreadAsReadMutation", ["metadata": metadata, "data": ["item_id": "", "message_id": messageID]])
-        _ = try await graphQL(
+        let data = try await graphQL("useIGDMarkThreadAsReadMutation", ["metadata": metadata, "data": ["item_id": "", "message_id": messageID]])
+        let receipt = data["xig_direct_item_seen_mutation_with_slide_messaging_response"] as? [String: Any]
+        let took = receipt.map { !($0["watermark_timestamp_ms"] is NSNull) && $0["watermark_timestamp_ms"] != nil } ?? false
+        #if DEBUG
+        NetworkRecorder.append(["time": Date().ISO8601Format(), "directMarkRead": longID, "took": took])
+        #endif
+        // The website sends this check along with it. Whether it goes through changes nothing
+        // about what was marked.
+        _ = try? await graphQL(
             "useIGDMarkThreadAsReadValidationMutation",
             ["metadata": metadata, "data": ["message_id": messageID, "message_timestamp_ms": timestampMs]]
         )
+        return took
     }
 
     /// The website's own ID for a message it sends: the time in milliseconds, shifted, plus random bits.

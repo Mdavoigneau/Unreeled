@@ -103,7 +103,7 @@ extension View {
     }
 }
 
-enum AppTab: CaseIterable, Hashable {
+enum AppTab: String, CaseIterable, Hashable, Codable {
     case home, search, activity, profile
 
     var symbol: String {

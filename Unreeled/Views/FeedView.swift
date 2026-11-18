@@ -241,6 +241,9 @@ final class FeedModel {
 
     private func loadMoreIfNeeded(api: InstagramAPI) {
         guard !isLoading, !reachedEnd, error == nil, furthestSeen >= posts.count - Self.lookahead else { return }
+        // Said here, before the request starts: two posts can come on screen together, and each
+        // one asks. Said only inside the task, both would send the page's request.
+        isLoading = true
         Task {
             await load(api: api, replacing: false)
             // Still near the end (that page was mostly reels): the one after it, too.

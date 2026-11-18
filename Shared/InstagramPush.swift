@@ -176,5 +176,13 @@ struct InstagramPush {
             account = routing["account"]
             self.source = source
         }
+
+        #if DEBUG
+        /// Debug builds: what a tapped notification about a message in this conversation leaves
+        /// the app, to try where a tap leads without a push (`-openThread`).
+        static func tapped(thread: String) -> Routing? {
+            Routing(["type": "direct_v2_text", "thread": thread], source: .app)
+        }
+        #endif
     }
 }
